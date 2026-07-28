@@ -127,7 +127,9 @@ test("conversation state builds transcript projection and request context", () =
     messages: [user("hello", 1, { id: "u-1" }), assistant("world", 2, { id: "a-1" })],
   });
 
-  assert.equal(state.meta.schemaVersion, 3);
+  assert.equal(state.meta.schemaVersion, 4);
+  assert.equal(state.meta.skillPresetId, "default");
+  assert.equal(state.meta.skillsDisabled, false);
   assert.equal(state.meta.totalMessageCount, 2);
   assert.equal(state.activeSegmentIndex, 0);
   assert.equal(timeline(state).length, 2);
@@ -688,4 +690,24 @@ test("model context sanitizer preserves user image content", () => {
 
   const requestContext = conversationState.buildRequestContext(state);
   assert.deepEqual(requestContext.messages[0].content, userImageMessage.content);
+});
+
+test("conversation normalization preserves per-conversation skills metadata", () => {
+  const seeded = conversationState.createConversationStateFromContext({ messages: [] });
+  const normalized = conversationState.normalizeConversationState({
+    meta: {
+      systemPrompt: "prompt",
+      skillPresetId: "focused",
+      skillsDisabled: true,
+    },
+    segments: seeded.segments,
+  });
+
+  assert.equal(normalized.meta.schemaVersion, 4);
+  assert.equal(normalized.meta.skillPresetId, "focused");
+  assert.equal(normalized.meta.skillsDisabled, true);
+
+  const appended = conversationState.appendMessagesToConversation(normalized, [user("next", 3)]);
+  assert.equal(appended.meta.skillPresetId, "focused");
+  assert.equal(appended.meta.skillsDisabled, true);
 });

@@ -216,6 +216,7 @@ export type RunAgentConversationTurnParams = {
   showSilentMemoryExtraction: boolean;
   skillsRootDir?: string;
   skillAccessPolicy?: SkillAccessPolicy;
+  skillsPrompt: string;
   onManagedSkillsChanged?: (change: {
     action: "install" | "create";
     names: string[];
@@ -285,6 +286,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     showSilentMemoryExtraction,
     skillsRootDir,
     skillAccessPolicy,
+    skillsPrompt,
     onManagedSkillsChanged,
     agentTemplates,
     getMcpSettings,
@@ -433,6 +435,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
           templates: enabledSubagentTemplates(agentTemplates),
           store: subagentStore,
           scheduler: subagentScheduler,
+          skillsPrompt,
         }
       : undefined,
   });

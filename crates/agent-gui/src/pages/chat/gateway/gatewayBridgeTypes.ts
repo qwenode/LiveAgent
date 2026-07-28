@@ -2,7 +2,12 @@ import type { MutableRefObject } from "react";
 import type { MentionComposerDraft } from "../../../components/chat/MentionComposer";
 import type { HistoryMessageRef } from "../../../lib/chat/conversation/conversationState";
 import type { PendingUploadedFile } from "../../../lib/chat/messages/uploadedFiles";
-import type { ChatRuntimeControls, ExecutionMode, ProviderId } from "../../../lib/settings";
+import type {
+  ChatRuntimeControls,
+  ExecutionMode,
+  ProviderId,
+  SystemToolId,
+} from "../../../lib/settings";
 import type { ConversationRuntimeEntry } from "../runtime/chatPageRuntime";
 
 export type GatewaySelectedModelEvent = {
@@ -29,6 +34,8 @@ export type GatewayChatRequestEvent = {
   workdir?: string;
   uploadedFiles?: PendingUploadedFile[];
   queuePolicy?: "auto" | "append" | "interrupt" | string;
+  skillPresetId?: string;
+  skillsDisabled?: boolean;
 };
 
 export type GatewayChatClaimedRequest = {
@@ -65,6 +72,9 @@ export type ActiveGatewayBridgeRequest = {
   runtimeControlsOverride?: ChatRuntimeControls;
   executionModeOverride?: ExecutionMode;
   workdirOverride?: string;
+  selectedSystemToolIdsOverride?: SystemToolId[];
+  skillPresetIdOverride?: string;
+  skillsDisabledOverride?: boolean;
 };
 
 export type SendChatAction = (overrides?: {
@@ -74,6 +84,9 @@ export type SendChatAction = (overrides?: {
   conversationIdOverride?: string;
   executionModeOverride?: ExecutionMode;
   workdirOverride?: string;
+  selectedSystemToolIdsOverride?: SystemToolId[];
+  skillPresetIdOverride?: string;
+  skillsDisabledOverride?: boolean;
   runtimeControlsOverride?: ChatRuntimeControls;
   gatewayBridgeRequestOverride?: ActiveGatewayBridgeRequest | null;
   preserveComposerOnStart?: boolean;

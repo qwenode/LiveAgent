@@ -231,9 +231,14 @@ function parseStoredChatContextMeta(
   );
 
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     systemPrompt,
     tools: Array.isArray(parsed.tools) ? parsed.tools : undefined,
+    skillPresetId:
+      typeof parsed.skillPresetId === "string" && parsed.skillPresetId.trim()
+        ? parsed.skillPresetId.trim()
+        : "default",
+    skillsDisabled: parsed.skillsDisabled === true,
     activeSegmentIndex: counts.activeSegmentIndex,
     totalSegmentCount: counts.totalSegmentCount,
     totalMessageCount: counts.totalMessageCount,
@@ -479,6 +484,20 @@ export async function setChatHistoryPinned(id: string, isPinned: boolean) {
 export async function setChatHistoryModel(id: string, selectedModelJson: string) {
   return withConversationWriteLock(id, () =>
     invoke<ChatHistorySummary>("chat_history_set_model", { id, selectedModelJson }),
+  );
+}
+
+export async function setChatHistorySkills(
+  id: string,
+  skillPresetId: string,
+  skillsDisabled: boolean,
+) {
+  return withConversationWriteLock(id, () =>
+    invoke<ChatHistorySummary>("chat_history_set_skills", {
+      id,
+      skillPresetId,
+      skillsDisabled,
+    }),
   );
 }
 
