@@ -1759,15 +1759,10 @@ export function normalizeSkillsSettings(input: unknown): SkillsSettings {
 }
 
 function normalizeSkillNames(input: unknown): string[] {
-  return [
-    ...new Set(
-      normalizeStringArray(input).filter((name) => !isAlwaysEnabledSkillNameForSettings(name)),
-    ),
-  ].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
-}
-
-function isAlwaysEnabledSkillNameForSettings(name: string) {
-  return mergeAlwaysEnabledSkillNames([]).includes(name);
+  const alwaysEnabled = new Set(mergeAlwaysEnabledSkillNames([]));
+  return [...new Set(normalizeStringArray(input).filter((name) => !alwaysEnabled.has(name)))].sort(
+    (left, right) => (left < right ? -1 : left > right ? 1 : 0),
+  );
 }
 
 export function normalizeSkillPresets(input: unknown, legacySelected?: unknown): SkillPreset[] {
