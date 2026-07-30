@@ -2,7 +2,7 @@ use rusqlite::{Connection, OptionalExtension};
 use std::{collections::HashSet, fs, path::PathBuf, sync::Mutex, time::Duration};
 
 const DB_FILENAME: &str = "chat-history.sqlite3";
-const HISTORY_DB_SCHEMA_VERSION: i64 = 2;
+const HISTORY_DB_SCHEMA_VERSION: i64 = 3;
 
 static HISTORY_DB_MIGRATION_LOCK: Mutex<()> = Mutex::new(());
 
@@ -88,6 +88,11 @@ fn migrate_history_db_inner(conn: &Connection) -> Result<(), String> {
         set_user_version(conn, 2)?;
     }
 
+    if current_version < 3 {
+        migrate_to_v3(conn)?;
+        set_user_version(conn, 3)?;
+    }
+
     // The subagent schema is versioned independently via subagentMeta and is
     // safe to (re)ensure on every startup.
     ensure_subagent_schema(conn)?;
@@ -104,6 +109,26 @@ fn migrate_to_v1(conn: &Connection) -> Result<(), String> {
 // 本身幂等，重跑即补齐缺失列。
 fn migrate_to_v2(conn: &Connection) -> Result<(), String> {
     ensure_chat_history_schema(conn)?;
+    Ok(())
+}
+
+// v3: workspace-scoped sidebar queries filter by the normalized cwd and sort
+// by pin/activity. A matching expression index avoids repeated full-table
+// scans when several visible workspaces hydrate their conversation feeds.
+fn migrate_to_v3(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "
+        CREATE INDEX IF NOT EXISTS idx_chatHistory_cwd_feed
+            ON chatHistory(
+                TRIM(COALESCE(cwd, '')),
+                is_pinned DESC,
+                pinned_at DESC,
+                updated_at DESC,
+                id ASC
+            );
+        ",
+    )
+    .map_err(|e| format!("创建工作空间历史索引失败：{e}"))?;
     Ok(())
 }
 
@@ -761,6 +786,39 @@ mod tests {
                 .expect("query table existence");
             assert_eq!(exists, 1, "{table_name} should exist");
         }
+    }
+
+    #[test]
+    fn v2_database_gains_workspace_feed_index_via_v3_migration() {
+        let conn = Connection::open_in_memory().expect("open v2 in-memory history db");
+        conn.execute_batch(
+            "
+            CREATE TABLE chatHistory (
+                id TEXT PRIMARY KEY,
+                cwd TEXT,
+                updated_at INTEGER NOT NULL,
+                is_pinned INTEGER NOT NULL DEFAULT 0,
+                pinned_at INTEGER
+            );
+            PRAGMA user_version = 2;
+            ",
+        )
+        .expect("create v2 history schema");
+
+        initialize_connection(&conn).expect("migrate v2 history schema");
+
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_chatHistory_cwd_feed'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query workspace feed index existence");
+        assert_eq!(exists, 1);
+        assert_eq!(
+            read_user_version(&conn).expect("read version"),
+            HISTORY_DB_SCHEMA_VERSION
+        );
     }
 
     #[test]

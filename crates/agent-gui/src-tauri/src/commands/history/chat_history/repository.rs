@@ -254,11 +254,14 @@ pub(crate) fn list_chat_history_workdirs_sync(
     let mut stmt = conn
         .prepare(
             "
-            SELECT TRIM(cwd) AS path, COUNT(*) AS conversation_count, MAX(updated_at) AS updated_at
+            SELECT
+                TRIM(COALESCE(cwd, '')) AS path,
+                COUNT(*) AS conversation_count,
+                MAX(updated_at) AS updated_at
             FROM chatHistory
             WHERE TRIM(COALESCE(cwd, '')) != ''
-            GROUP BY TRIM(cwd)
-            ORDER BY MAX(updated_at) DESC, TRIM(cwd) ASC
+            GROUP BY TRIM(COALESCE(cwd, ''))
+            ORDER BY MAX(updated_at) DESC, TRIM(COALESCE(cwd, '')) ASC
             ",
         )
         .map_err(|e| format!("准备历史工作目录查询失败：{e}"))?;
