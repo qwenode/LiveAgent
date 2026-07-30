@@ -163,6 +163,9 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
   // --- Rename UI state (moved out of GatewayApp) ---------------------------
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [visibleWorkspaceProjectPathKeys, setVisibleWorkspaceProjectPathKeys] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
 
   useEffect(() => {
     if (!sectionsDisabled) {
@@ -341,12 +344,22 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
     () => new Set(props.collapsedWorkspaceProjectPaths),
     [props.collapsedWorkspaceProjectPaths],
   );
+  const handleVisibleWorkspaceProjectsChange = useStableCallback(
+    (visibleProjects: readonly WorkspaceProject[]) => {
+      setVisibleWorkspaceProjectPathKeys(
+        new Set(
+          visibleProjects.map((project) => workspaceProjectPathKey(project.path)).filter(Boolean),
+        ),
+      );
+    },
+  );
   const workspaceFeedRefreshTargets = useMemo(
     () =>
       sortedProjects.flatMap((project) => {
         const pathKey = workspaceProjectPathKey(project.path);
         if (
           !pathKey ||
+          !visibleWorkspaceProjectPathKeys.has(pathKey) ||
           props.archivedProjectPathKeys?.has(pathKey) ||
           props.missingProjectPathKeys.has(pathKey)
         ) {
@@ -354,7 +367,12 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
         }
         return [{ pathKey, cwd: project.path }];
       }),
-    [props.archivedProjectPathKeys, props.missingProjectPathKeys, sortedProjects],
+    [
+      props.archivedProjectPathKeys,
+      props.missingProjectPathKeys,
+      sortedProjects,
+      visibleWorkspaceProjectPathKeys,
+    ],
   );
   const expandedWorkspaceFeedTargets = useMemo(
     () =>
@@ -435,6 +453,7 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
       onProjectsCollapsedChange={props.onProjectsCollapsedChange}
       onRecentCollapsedChange={props.onRecentCollapsedChange}
       onWorkspaceProjectCollapsedChange={props.onWorkspaceProjectCollapsedChange}
+      onVisibleWorkspaceProjectsChange={handleVisibleWorkspaceProjectsChange}
       onRetryWorkspaceFeed={handleRetryWorkspaceFeed}
       onLoadMoreWorkspaceFeed={handleLoadMoreWorkspaceFeed}
       onCollapseWorkspaceFeed={handleCollapseWorkspaceFeed}

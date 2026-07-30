@@ -59,7 +59,12 @@ test("web workspace feed loading excludes unavailable projects and is inert offl
   );
   assert.match(
     refreshTargets,
-    /!pathKey \|\|\s*props\.archivedProjectPathKeys\?\.has\(pathKey\) \|\|\s*props\.missingProjectPathKeys\.has\(pathKey\)/,
+    /!pathKey \|\|\s*!visibleWorkspaceProjectPathKeys\.has\(pathKey\) \|\|\s*props\.archivedProjectPathKeys\?\.has\(pathKey\) \|\|\s*props\.missingProjectPathKeys\.has\(pathKey\)/,
+  );
+  assert.match(sidebarSource, /onVisibleWorkspaceProjectsChange\?\.\(renderedProjects\)/);
+  assert.match(
+    containerSource,
+    /onVisibleWorkspaceProjectsChange=\{handleVisibleWorkspaceProjectsChange\}/,
   );
   assert.match(containerSource, /store\.setWorkspaceFeedRefreshTargets/);
   assert.match(
@@ -86,6 +91,12 @@ test("web workspace feed loading excludes unavailable projects and is inert offl
   assert.match(containerSource, /const visibleWorkspaceFeeds = useMemo/);
   assert.match(containerSource, /isGatewayTransportErrorDetail\(feed\.errorDetail\)/);
   assert.match(containerSource, /workspaceFeeds=\{visibleWorkspaceFeeds\}/);
+});
+
+test("web workspace project names use ellipsis instead of a fade mask", () => {
+  const projectRow = between(sidebarSource, "const ProjectRow =", "function HistoryListLoadingSkeleton");
+  assert.doesNotMatch(projectRow, /sidebar-project-name-fade/);
+  assert.match(projectRow, /min-w-0 flex-1 truncate/);
 });
 
 test("web Agent mode renders workspace feeds while non-Agent mode keeps the recent list", () => {

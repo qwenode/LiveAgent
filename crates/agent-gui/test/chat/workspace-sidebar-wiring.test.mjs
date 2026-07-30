@@ -65,12 +65,17 @@ test("desktop workspace feed loading excludes hidden projects and preserves non-
   );
   assert.match(
     refreshTargets,
-    /!pathKey \|\|\s*props\.archivedProjectPathKeys\?\.has\(pathKey\) \|\|\s*props\.missingProjectPathKeys\.has\(pathKey\)/,
+    /!pathKey \|\|\s*!visibleWorkspaceProjectPathKeys\.has\(pathKey\) \|\|\s*props\.archivedProjectPathKeys\?\.has\(pathKey\) \|\|\s*props\.missingProjectPathKeys\.has\(pathKey\)/,
+  );
+  assert.match(sidebarSource, /onVisibleWorkspaceProjectsChange\?\.\(renderedProjects\)/);
+  assert.match(
+    containerSource,
+    /onVisibleWorkspaceProjectsChange=\{handleVisibleWorkspaceProjectsChange\}/,
   );
   assert.match(containerSource, /store\.setWorkspaceFeedRefreshTargets/);
   assert.match(
     containerSource,
-    /if \(!props\.showProjects \|\| props\.projectsCollapsed \|\| expandedWorkspaceFeedTargets\.length === 0\)/,
+    /if \(\s*!props\.showProjects \|\|\s*props\.projectsCollapsed \|\|\s*expandedWorkspaceFeedTargets\.length === 0\s*\)/,
   );
   assert.match(containerSource, /store\.ensureWorkspaceFeeds\(expandedWorkspaceFeedTargets\)/);
 
@@ -94,6 +99,12 @@ test("desktop workspace feed loading excludes hidden projects and preserves non-
     "return;",
     "onLoadMore();",
   ]);
+});
+
+test("desktop workspace project names use ellipsis instead of a fade mask", () => {
+  const projectRow = between(sidebarSource, "const ProjectRow =", "function HistoryListLoadingSkeleton");
+  assert.doesNotMatch(projectRow, /sidebar-project-name-fade/);
+  assert.match(projectRow, /min-w-0 flex-1 truncate/);
 });
 
 test("desktop workspace conversation opening waits for directory, project, and scope readiness", () => {

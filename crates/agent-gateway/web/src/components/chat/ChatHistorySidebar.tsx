@@ -107,6 +107,7 @@ type ChatHistorySidebarProps = {
   onProjectsCollapsedChange?: (collapsed: boolean) => void;
   onRecentCollapsedChange?: (collapsed: boolean) => void;
   onWorkspaceProjectCollapsedChange?: (project: WorkspaceProject, collapsed: boolean) => void;
+  onVisibleWorkspaceProjectsChange?: (projects: readonly WorkspaceProject[]) => void;
   onRetryWorkspaceFeed?: (project: WorkspaceProject) => void;
   onLoadMoreWorkspaceFeed?: (project: WorkspaceProject) => void;
   onCollapseWorkspaceFeed?: (project: WorkspaceProject) => void;
@@ -1132,7 +1133,7 @@ const ProjectRow = memo(function ProjectRow(props: {
                 />
                 <span
                   className={cn(
-                    "sidebar-project-name-fade min-w-0 flex-1 overflow-hidden whitespace-nowrap text-[calc(14px*var(--zone-font-scale,1))] font-normal leading-5",
+                    "min-w-0 flex-1 truncate text-[calc(14px*var(--zone-font-scale,1))] font-normal leading-5",
                     isMissing ? "text-destructive" : undefined,
                   )}
                 >
@@ -1386,6 +1387,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
     onProjectsCollapsedChange,
     onRecentCollapsedChange,
     onWorkspaceProjectCollapsedChange,
+    onVisibleWorkspaceProjectsChange,
     onRetryWorkspaceFeed,
     onLoadMoreWorkspaceFeed,
     onCollapseWorkspaceFeed,
@@ -1788,6 +1790,9 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
     () => (showAllProjects ? activeProjects : activeProjects.slice(0, SIDEBAR_PROJECT_RENDER_CAP)),
     [activeProjects, showAllProjects],
   );
+  useEffect(() => {
+    onVisibleWorkspaceProjectsChange?.(renderedProjects);
+  }, [onVisibleWorkspaceProjectsChange, renderedProjects]);
   // Archiving must always leave at least one active workspace behind.
   const canArchiveProjects = Boolean(onArchiveProject) && activeProjects.length > 1;
   const [archivedGroupOpen, setArchivedGroupOpen] = useState(false);

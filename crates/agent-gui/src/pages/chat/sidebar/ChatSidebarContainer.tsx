@@ -104,6 +104,9 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [visibleWorkspaceProjectPathKeys, setVisibleWorkspaceProjectPathKeys] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
 
   const sortedProjects = useMemo(
     () =>
@@ -117,12 +120,23 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
     () => new Set(props.collapsedWorkspaceProjectPaths),
     [props.collapsedWorkspaceProjectPaths],
   );
+  const handleVisibleWorkspaceProjectsChange = useCallback(
+    (visibleProjects: readonly WorkspaceProject[]) => {
+      setVisibleWorkspaceProjectPathKeys(
+        new Set(
+          visibleProjects.map((project) => workspaceProjectPathKey(project.path)).filter(Boolean),
+        ),
+      );
+    },
+    [],
+  );
   const workspaceFeedRefreshTargets = useMemo(
     () =>
       sortedProjects.flatMap((project) => {
         const pathKey = workspaceProjectPathKey(project.path);
         if (
           !pathKey ||
+          !visibleWorkspaceProjectPathKeys.has(pathKey) ||
           props.archivedProjectPathKeys?.has(pathKey) ||
           props.missingProjectPathKeys.has(pathKey)
         ) {
@@ -130,7 +144,12 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
         }
         return [{ pathKey, cwd: project.path }];
       }),
-    [props.archivedProjectPathKeys, props.missingProjectPathKeys, sortedProjects],
+    [
+      props.archivedProjectPathKeys,
+      props.missingProjectPathKeys,
+      sortedProjects,
+      visibleWorkspaceProjectPathKeys,
+    ],
   );
   const expandedWorkspaceFeedTargets = useMemo(
     () =>
@@ -294,6 +313,7 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
       onProjectsCollapsedChange={props.onProjectsCollapsedChange}
       onRecentCollapsedChange={props.onRecentCollapsedChange}
       onWorkspaceProjectCollapsedChange={props.onWorkspaceProjectCollapsedChange}
+      onVisibleWorkspaceProjectsChange={handleVisibleWorkspaceProjectsChange}
       onRetryWorkspaceFeed={handleRetryWorkspaceFeed}
       onLoadMoreWorkspaceFeed={handleLoadMoreWorkspaceFeed}
       onCollapseWorkspaceFeed={handleCollapseWorkspaceFeed}
