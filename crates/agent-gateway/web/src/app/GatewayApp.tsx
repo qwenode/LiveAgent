@@ -161,7 +161,9 @@ import {
   createConversationOpenController,
 } from "@/lib/sidebar/openController";
 import { sortSidebarConversations } from "@/lib/sidebar/reconcile";
+import { sidebarScopeKey } from "@/lib/sidebar/scope";
 import { createSidebarStore } from "@/lib/sidebar/store";
+import type { SidebarScope } from "@/lib/sidebar/types";
 import { useSidebarSelector } from "@/lib/sidebar/useSidebarSelector";
 import {
   createIdleSidebarBackend,
@@ -559,15 +561,29 @@ export default function GatewayApp() {
   // Scope derivation: agent mode with a project → that workdir; agent mode
   // without a project → "none" (resolves to an empty list locally, no wire
   // sentinel); text mode → unscoped.
-  useEffect(() => {
-    sidebarStore.setScope(
+  const sidebarScope = useMemo<SidebarScope>(
+    () =>
       isAgentMode
         ? activeWorkspaceProjectPath
           ? { kind: "workdir", cwd: activeWorkspaceProjectPath }
           : { kind: "none" }
         : { kind: "unscoped" },
-    );
-  }, [activeWorkspaceProjectPath, isAgentMode, sidebarStore]);
+    [activeWorkspaceProjectPath, isAgentMode],
+  );
+  useEffect(() => {
+    sidebarStore.setScope(sidebarScope);
+  }, [sidebarScope, sidebarStore]);
+  const historyScopeKey = sidebarScopeKey(sidebarScope);
+  const workspaceConversationSelectionSeqRef = useRef(0);
+  const pendingWorkspaceConversationRef = useRef<{
+    conversationId: string;
+    targetPathKey: string;
+    targetScopeKey: string;
+  } | null>(null);
+  const cancelPendingWorkspaceConversation = useCallback(() => {
+    workspaceConversationSelectionSeqRef.current += 1;
+    pendingWorkspaceConversationRef.current = null;
+  }, []);
 
   // Conversation-open controller: the web end paints the conversation's whole
   // established history window in the single open phase — messages above the
@@ -1268,16 +1284,18 @@ export default function GatewayApp() {
 
   const handleSelectWorkspaceProject = useCallback(
     async (project: WorkspaceProject) => {
+      cancelPendingWorkspaceConversation();
       if (!(await checkWorkspaceProjectDirectory(project))) {
         return;
       }
       activateWorkspaceProject(project);
     },
-    [activateWorkspaceProject, checkWorkspaceProjectDirectory],
+    [activateWorkspaceProject, cancelPendingWorkspaceConversation, checkWorkspaceProjectDirectory],
   );
 
   const handleNewConversationForProject = useCallback(
     async (project: WorkspaceProject) => {
+      cancelPendingWorkspaceConversation();
       if (!(await checkWorkspaceProjectDirectory(project))) {
         return;
       }
@@ -1286,11 +1304,12 @@ export default function GatewayApp() {
       }
       activateWorkspaceProject(project, { startConversation: true });
     },
-    [activateWorkspaceProject, checkWorkspaceProjectDirectory],
+    [activateWorkspaceProject, cancelPendingWorkspaceConversation, checkWorkspaceProjectDirectory],
   );
 
   const handleBrowseWorkspaceProjectInFileTree = useCallback(
     async (project: WorkspaceProject) => {
+      cancelPendingWorkspaceConversation();
       if (!(await checkWorkspaceProjectDirectory(project))) {
         return;
       }
@@ -1307,7 +1326,12 @@ export default function GatewayApp() {
       activateWorkspaceProject(project);
       setSettings((prev) => openRightDockSingletonTab(prev, pathKey, "fileTree"));
     },
-    [activateWorkspaceProject, checkWorkspaceProjectDirectory, setSettings],
+    [
+      activateWorkspaceProject,
+      cancelPendingWorkspaceConversation,
+      checkWorkspaceProjectDirectory,
+      setSettings,
+    ],
   );
 
   const handleOpenCreateWorkspaceProject = useCallback(() => {
@@ -1403,10 +1427,11 @@ export default function GatewayApp() {
 
   const handleOpenClonedWorkspace = useCallback(
     (path: string) => {
+      cancelPendingWorkspaceConversation();
       activateWorkspaceProject(createWorkspaceProjectFromPath(path, "managed"));
       void sidebarStore.refreshWorkdirs("new-workdir");
     },
-    [activateWorkspaceProject, sidebarStore],
+    [activateWorkspaceProject, cancelPendingWorkspaceConversation, sidebarStore],
   );
 
   const handleLoadWorkspaceRemoteBranches = useCallback(
@@ -1421,10 +1446,11 @@ export default function GatewayApp() {
     (path: string) => {
       const normalizedPath = path.trim();
       if (!normalizedPath) return;
+      cancelPendingWorkspaceConversation();
       activateWorkspaceProject(createWorkspaceProjectFromPath(normalizedPath, "managed"));
       void sidebarStore.refreshWorkdirs("new-workdir");
     },
-    [activateWorkspaceProject, sidebarStore],
+    [activateWorkspaceProject, cancelPendingWorkspaceConversation, sidebarStore],
   );
 
   const commitWorkspaceProjectRename = useCallback(
@@ -1560,6 +1586,29 @@ export default function GatewayApp() {
           },
         }),
       );
+    },
+    [setSettings],
+  );
+
+  const handleSidebarWorkspaceProjectCollapsedChange = useCallback(
+    (project: WorkspaceProject, collapsed: boolean) => {
+      const pathKey = workspaceProjectPathKey(project.path);
+      if (!pathKey) return;
+      setSettings((prev) => {
+        const current = prev.customSettings.chatSidebar.collapsedWorkspaceProjectPaths;
+        const collapsedWorkspaceProjectPaths = collapsed
+          ? current.includes(pathKey)
+            ? current
+            : [...current, pathKey]
+          : current.filter((item) => item !== pathKey);
+        if (collapsedWorkspaceProjectPaths === current) return prev;
+        return updateCustomSettings(prev, {
+          chatSidebar: {
+            ...prev.customSettings.chatSidebar,
+            collapsedWorkspaceProjectPaths,
+          },
+        });
+      });
     },
     [setSettings],
   );
@@ -2788,6 +2837,7 @@ export default function GatewayApp() {
   const handleRemoveWorkspaceProject = useCallback(
     (project: WorkspaceProject) => {
       if (project.id === DEFAULT_WORKSPACE_PROJECT_ID) return;
+      cancelPendingWorkspaceConversation();
 
       void (async () => {
         const currentApi = api;
@@ -2987,6 +3037,7 @@ export default function GatewayApp() {
       activeWorkspaceProjectPath,
       activityStore,
       api,
+      cancelPendingWorkspaceConversation,
       clearCachedComposerDraft,
       isAgentMode,
       isConversationBusy,
@@ -3015,6 +3066,7 @@ export default function GatewayApp() {
       );
       // Archiving is only offered while another active workspace remains.
       if (!fallbackProject) return;
+      cancelPendingWorkspaceConversation();
       if (
         activeWorkspaceProject &&
         (activeWorkspaceProject.id === project.id ||
@@ -3043,6 +3095,7 @@ export default function GatewayApp() {
       activateWorkspaceProject,
       activeWorkspaceProject,
       archivedWorkspaceProjectPathKeys,
+      cancelPendingWorkspaceConversation,
       setSettings,
       workspaceProjects,
     ],
@@ -3072,6 +3125,7 @@ export default function GatewayApp() {
   );
 
   function handleSidebarNewConversation() {
+    cancelPendingWorkspaceConversation();
     if (isMobileSidebarLayout()) {
       setSidebarOpen(false);
     }
@@ -3101,6 +3155,7 @@ export default function GatewayApp() {
     if (!targetConversationId) {
       return;
     }
+    cancelPendingWorkspaceConversation();
 
     const currentConversationId = getVisibleComposerConversationId().trim();
     if (currentConversationId !== targetConversationId) {
@@ -3134,6 +3189,66 @@ export default function GatewayApp() {
     openController.open(targetConversationId);
     restoreCachedComposerDraft(targetConversationId);
   }
+  const handleSidebarSelectConversationRef = useRef(handleSidebarSelectConversation);
+  handleSidebarSelectConversationRef.current = handleSidebarSelectConversation;
+
+  async function handleSidebarSelectWorkspaceConversation(
+    project: WorkspaceProject,
+    id: string,
+  ) {
+    const conversationId = id.trim();
+    const targetPathKey = workspaceProjectPathKey(project.path);
+    if (!conversationId || !targetPathKey) return;
+    if (isMobileSidebarLayout()) {
+      setSidebarOpen(false);
+    }
+    setActiveView("chat");
+    if (workspaceProjectPathKey(activeWorkspaceProjectPath) === targetPathKey) {
+      handleSidebarSelectConversation(conversationId);
+      return;
+    }
+    const selectionSeq = workspaceConversationSelectionSeqRef.current + 1;
+    workspaceConversationSelectionSeqRef.current = selectionSeq;
+    pendingWorkspaceConversationRef.current = null;
+    if (!(await checkWorkspaceProjectDirectory(project))) return;
+    if (workspaceConversationSelectionSeqRef.current !== selectionSeq) return;
+    pendingWorkspaceConversationRef.current = {
+      conversationId,
+      targetPathKey,
+      targetScopeKey: sidebarScopeKey({ kind: "workdir", cwd: project.path }),
+    };
+    activateWorkspaceProject(project);
+  }
+
+  useEffect(() => {
+    const pending = pendingWorkspaceConversationRef.current;
+    if (!pending) return;
+    const targetProject = workspaceProjects.find(
+      (project) => workspaceProjectPathKey(project.path) === pending.targetPathKey,
+    );
+    if (
+      !targetProject ||
+      archivedWorkspaceProjectPathKeys.has(pending.targetPathKey) ||
+      !sidebarConversationsById.has(pending.conversationId)
+    ) {
+      pendingWorkspaceConversationRef.current = null;
+      return;
+    }
+    if (
+      workspaceProjectPathKey(activeWorkspaceProjectPath) !== pending.targetPathKey ||
+      historyScopeKey !== pending.targetScopeKey
+    ) {
+      return;
+    }
+    pendingWorkspaceConversationRef.current = null;
+    handleSidebarSelectConversationRef.current(pending.conversationId);
+  }, [
+    activeWorkspaceProjectPath,
+    archivedWorkspaceProjectPathKeys,
+    historyScopeKey,
+    sidebarConversationsById,
+    workspaceProjects,
+  ]);
 
   // Conversations that left the authoritative sidebar index (remote deletes,
   // confirmed local deletes, reconcile drops): clean per-conversation caches
@@ -4665,7 +4780,7 @@ export default function GatewayApp() {
               isOpen={sidebarOpen}
               fontScale={settings.customSettings.fontScale.sidebar}
               activeView={activeView}
-              showProjects={isAgentMode && status?.online === true}
+              showProjects={isAgentMode}
               projects={workspaceProjects}
               activeProjectId={activeWorkspaceProject?.id}
               missingProjectPathKeys={missingWorkspaceProjectPathKeys}
@@ -4673,6 +4788,9 @@ export default function GatewayApp() {
               projectRenameDraft={projectRenameDraft}
               projectsCollapsed={settings.customSettings.chatSidebar.projectsCollapsed}
               recentCollapsed={settings.customSettings.chatSidebar.recentCollapsed}
+              collapsedWorkspaceProjectPaths={
+                settings.customSettings.chatSidebar.collapsedWorkspaceProjectPaths
+              }
               canShareConversations={canShareHistory}
               sharedConversationCount={sharedHistoryItems.length}
               externalErrorMessage={sidebarActionError}
@@ -4681,6 +4799,9 @@ export default function GatewayApp() {
               isLocalDraftConversationId={isLocalDraftConversationId}
               onProjectsCollapsedChange={handleSidebarProjectsCollapsedChange}
               onRecentCollapsedChange={handleSidebarRecentCollapsedChange}
+              onWorkspaceProjectCollapsedChange={
+                handleSidebarWorkspaceProjectCollapsedChange
+              }
               onCreateProject={handleOpenCreateWorkspaceProject}
               onSelectProject={handleSelectWorkspaceProject}
               onNewConversationForProject={handleNewConversationForProject}
@@ -4696,6 +4817,7 @@ export default function GatewayApp() {
               archivedProjectPathKeys={archivedWorkspaceProjectPathKeys}
               onNewConversation={handleSidebarNewConversation}
               onSelectConversation={handleSidebarSelectConversation}
+              onSelectProjectConversation={handleSidebarSelectWorkspaceConversation}
               onShareConversation={handleOpenShareModal}
               onOpenSharedConversations={handleOpenSharedHistoryManager}
               onLocalDraftDeleted={handleSidebarLocalDraftDeleted}

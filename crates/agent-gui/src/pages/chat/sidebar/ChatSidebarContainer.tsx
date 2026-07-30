@@ -3,19 +3,21 @@
 // ChatPage), the conversation-rename UI state, the delete flow, and the
 // error-code → i18n mapping. NOT mirrored — the web end has its own container.
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChatHistorySidebar } from "../../../components/chat/ChatHistorySidebar";
 import { useLocale } from "../../../i18n";
 import type { AppUpdateController } from "../../../lib/appUpdates";
 import { normalizeConversationTitle } from "../../../lib/chat/page/chatPageHelpers";
-import type { WorkspaceProject } from "../../../lib/settings";
+import { type WorkspaceProject, workspaceProjectPathKey } from "../../../lib/settings";
 import type { SidebarBatchDeleteOptions } from "../../../lib/sidebar/batchDelete";
 import { deleteSidebarConversations } from "../../../lib/sidebar/batchDelete";
 import {
+  selectConversationIndex,
   selectConversations,
   selectListState,
   selectProjectActivityInputs,
   selectRunningConversationIds,
+  selectWorkspaceFeeds,
   sidebarShallowEqual,
 } from "../../../lib/sidebar/selectors";
 import type { SidebarSnapshot, SidebarStore } from "../../../lib/sidebar/store";
@@ -39,8 +41,10 @@ type ChatSidebarContainerProps = {
   projectRenameDraft: string;
   projectsCollapsed: boolean;
   recentCollapsed: boolean;
+  collapsedWorkspaceProjectPaths: readonly string[];
   onProjectsCollapsedChange: (collapsed: boolean) => void;
   onRecentCollapsedChange: (collapsed: boolean) => void;
+  onWorkspaceProjectCollapsedChange: (project: WorkspaceProject, collapsed: boolean) => void;
   onCreateProject: () => void;
   onSelectProject: (project: WorkspaceProject) => void;
   onNewConversationForProject: (project: WorkspaceProject) => void;
@@ -57,6 +61,7 @@ type ChatSidebarContainerProps = {
   archivedProjectPathKeys?: ReadonlySet<string>;
   onNewConversation: () => void;
   onSelectConversation: (id: string) => void;
+  onSelectProjectConversation: (project: WorkspaceProject, id: string) => void;
   // Invoked after the store confirmed a deletion; ChatPage cleans artifacts
   // and replaces the current conversation when needed.
   onConversationDeleted: (id: string) => void;
@@ -84,6 +89,8 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
   const { t } = useLocale();
 
   const items = useSidebarSelector(store, selectConversations);
+  const conversationById = useSidebarSelector(store, selectConversationIndex);
+  const workspaceFeeds = useSidebarSelector(store, selectWorkspaceFeeds);
   const listState = useSidebarSelector(store, selectListState, sidebarShallowEqual);
   const scopeKey = useSidebarSelector(store, (snapshot) => snapshot.scopeKey);
   const runningConversationIds = useSidebarSelector(store, selectRunningConversationIds);
@@ -106,6 +113,43 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
       }),
     [projectActivityInputs.runningWorkdirPathKeys, projectActivityInputs.workdirActivity, projects],
   );
+  const collapsedWorkspaceProjectPathKeys = useMemo(
+    () => new Set(props.collapsedWorkspaceProjectPaths),
+    [props.collapsedWorkspaceProjectPaths],
+  );
+  const workspaceFeedRefreshTargets = useMemo(
+    () =>
+      sortedProjects.flatMap((project) => {
+        const pathKey = workspaceProjectPathKey(project.path);
+        if (
+          !pathKey ||
+          props.archivedProjectPathKeys?.has(pathKey) ||
+          props.missingProjectPathKeys.has(pathKey)
+        ) {
+          return [];
+        }
+        return [{ pathKey, cwd: project.path }];
+      }),
+    [props.archivedProjectPathKeys, props.missingProjectPathKeys, sortedProjects],
+  );
+  const expandedWorkspaceFeedTargets = useMemo(
+    () =>
+      workspaceFeedRefreshTargets.filter(
+        (target) => !collapsedWorkspaceProjectPathKeys.has(target.pathKey),
+      ),
+    [collapsedWorkspaceProjectPathKeys, workspaceFeedRefreshTargets],
+  );
+
+  useEffect(() => {
+    store.setWorkspaceFeedRefreshTargets(props.showProjects ? workspaceFeedRefreshTargets : []);
+  }, [props.showProjects, store, workspaceFeedRefreshTargets]);
+
+  useEffect(() => {
+    if (!props.showProjects || props.projectsCollapsed || expandedWorkspaceFeedTargets.length === 0) {
+      return;
+    }
+    void store.ensureWorkspaceFeeds(expandedWorkspaceFeedTargets);
+  }, [expandedWorkspaceFeedTargets, props.projectsCollapsed, props.showProjects, store]);
 
   const handleStartRenaming = useCallback(
     (item: SidebarConversation) => {
@@ -178,6 +222,29 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
     void store.loadMore();
   }, [store]);
 
+  const handleRetryWorkspaceFeed = useCallback(
+    (project: WorkspaceProject) => {
+      const pathKey = workspaceProjectPathKey(project.path);
+      if (pathKey) void store.retryWorkspaceFeed({ pathKey, cwd: project.path });
+    },
+    [store],
+  );
+
+  const handleLoadMoreWorkspaceFeed = useCallback(
+    (project: WorkspaceProject) => {
+      const pathKey = workspaceProjectPathKey(project.path);
+      if (pathKey) void store.loadMoreWorkspaceFeed({ pathKey, cwd: project.path });
+    },
+    [store],
+  );
+
+  const handleCollapseWorkspaceFeed = useCallback(
+    (project: WorkspaceProject) => {
+      store.collapseWorkspaceFeed(workspaceProjectPathKey(project.path));
+    },
+    [store],
+  );
+
   // A per-row mutation error is more actionable (and dismissable) than the
   // list error, so it takes the banner slot when both exist.
   const firstMutationError = mutationErrors.entries().next();
@@ -196,6 +263,8 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
   return (
     <ChatHistorySidebar
       items={items}
+      conversationById={conversationById}
+      workspaceFeeds={workspaceFeeds}
       currentConversationId={props.currentConversationId}
       runningConversationIds={runningConversationIds}
       busyConversationIds={busyConversationIds}
@@ -221,8 +290,13 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
       projectRenameDraft={props.projectRenameDraft}
       projectsCollapsed={props.projectsCollapsed}
       recentCollapsed={props.recentCollapsed}
+      collapsedWorkspaceProjectPathKeys={collapsedWorkspaceProjectPathKeys}
       onProjectsCollapsedChange={props.onProjectsCollapsedChange}
       onRecentCollapsedChange={props.onRecentCollapsedChange}
+      onWorkspaceProjectCollapsedChange={props.onWorkspaceProjectCollapsedChange}
+      onRetryWorkspaceFeed={handleRetryWorkspaceFeed}
+      onLoadMoreWorkspaceFeed={handleLoadMoreWorkspaceFeed}
+      onCollapseWorkspaceFeed={handleCollapseWorkspaceFeed}
       onCreateProject={props.onCreateProject}
       onSelectProject={props.onSelectProject}
       onNewConversationForProject={props.onNewConversationForProject}
@@ -239,6 +313,7 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
       archivedProjectPathKeys={props.archivedProjectPathKeys}
       onNewConversation={props.onNewConversation}
       onSelectConversation={props.onSelectConversation}
+      onSelectProjectConversation={props.onSelectProjectConversation}
       onStartRenaming={handleStartRenaming}
       onRenameDraftChange={setRenameDraft}
       onCommitRename={handleCommitRename}

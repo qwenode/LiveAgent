@@ -76,6 +76,7 @@ import {
   updateSkills,
   updateSshProjectHostIds,
   updateSystem,
+  type WorkspaceProject,
   workspaceProjectPathKey,
 } from "../lib/settings";
 import { cn } from "../lib/shared/utils";
@@ -251,6 +252,7 @@ export function ChatPage(props: ChatPageProps) {
   );
   const prepareComposerForConversationChangeActionRef = useRef<() => void>(() => undefined);
   const focusComposerAfterConversationChangeActionRef = useRef<() => void>(() => undefined);
+  const cancelPendingWorkspaceConversationActionRef = useRef<() => void>(() => undefined);
   const [activeView, setActiveView] = useState<"chat" | "skills-hub" | "mcp-hub">("chat");
   const [rightDockOpen, setRightDockOpen] = useState(false);
   const {
@@ -266,6 +268,7 @@ export function ChatPage(props: ChatPageProps) {
     setProjectRenamingId,
     projectRenameDraft,
     setProjectRenameDraft,
+    checkWorkspaceProjectDirectory,
     activateWorkspaceProject,
     handleSelectWorkspaceProject,
     handleNewConversationForProject,
@@ -286,6 +289,7 @@ export function ChatPage(props: ChatPageProps) {
     handleSetWorkspaceProjectPinned,
     handleSidebarProjectsCollapsedChange,
     handleSidebarRecentCollapsedChange,
+    handleSidebarWorkspaceProjectCollapsedChange,
   } = useWorkspaceProjects({
     settings,
     setSettings,
@@ -299,6 +303,7 @@ export function ChatPage(props: ChatPageProps) {
     startNewConversationActionRef,
     prepareComposerForConversationChangeActionRef,
     focusComposerAfterConversationChangeActionRef,
+    cancelPendingWorkspaceConversationActionRef,
   });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const { remoteRuntimeStatus, setRemoteRuntimeStatus } = useGatewayStatus({
@@ -1135,6 +1140,7 @@ export function ChatPage(props: ChatPageProps) {
     setRightDockOpen,
     displayedConversationWorkdir,
     startNewConversationActionRef,
+    cancelPendingWorkspaceConversationActionRef,
   });
 
   useEffect(() => {
@@ -1457,7 +1463,20 @@ export function ChatPage(props: ChatPageProps) {
     setSidebarOpen((prev) => !prev);
   }, []);
 
+  const workspaceConversationSelectionSeqRef = useRef(0);
+  const pendingWorkspaceConversationRef = useRef<{
+    conversationId: string;
+    targetPathKey: string;
+    targetScopeKey: string;
+  } | null>(null);
+  const cancelPendingWorkspaceConversation = useCallback(() => {
+    workspaceConversationSelectionSeqRef.current += 1;
+    pendingWorkspaceConversationRef.current = null;
+  }, []);
+  cancelPendingWorkspaceConversationActionRef.current = cancelPendingWorkspaceConversation;
+
   const handleNewConversation = useCallback(() => {
+    cancelPendingWorkspaceConversation();
     openController.cancel();
     prepareComposerForConversationChange();
     startNewConversationActionRef.current({
@@ -1466,6 +1485,7 @@ export function ChatPage(props: ChatPageProps) {
     focusComposerAfterConversationChangeActionRef.current();
   }, [
     activeWorkspaceProjectPath,
+    cancelPendingWorkspaceConversation,
     isAgentMode,
     openController,
     prepareComposerForConversationChange,
@@ -1486,12 +1506,79 @@ export function ChatPage(props: ChatPageProps) {
       if (!targetConversationId) {
         return;
       }
+      cancelPendingWorkspaceConversation();
       prepareComposerForConversationChange();
       openController.open(targetConversationId);
       restoreCachedComposerDraft(targetConversationId);
     },
-    [openController],
+    [
+      cancelPendingWorkspaceConversation,
+      openController,
+      prepareComposerForConversationChange,
+      restoreCachedComposerDraft,
+    ],
   );
+
+  const handleSelectWorkspaceConversation = useCallback(
+    async (project: WorkspaceProject, id: string) => {
+      const conversationId = id.trim();
+      const targetPathKey = workspaceProjectPathKey(project.path);
+      if (!conversationId || !targetPathKey) return;
+      setActiveView("chat");
+      if (workspaceProjectPathKey(activeWorkspaceProjectPath) === targetPathKey) {
+        handleSelectConversation(conversationId);
+        return;
+      }
+      const selectionSeq = workspaceConversationSelectionSeqRef.current + 1;
+      workspaceConversationSelectionSeqRef.current = selectionSeq;
+      pendingWorkspaceConversationRef.current = null;
+      if (!(await checkWorkspaceProjectDirectory(project))) return;
+      if (workspaceConversationSelectionSeqRef.current !== selectionSeq) return;
+      pendingWorkspaceConversationRef.current = {
+        conversationId,
+        targetPathKey,
+        targetScopeKey: `cwd:${project.path.trim()}`,
+      };
+      activateWorkspaceProject(project);
+    },
+    [
+      activateWorkspaceProject,
+      activeWorkspaceProjectPath,
+      checkWorkspaceProjectDirectory,
+      handleSelectConversation,
+    ],
+  );
+
+  useEffect(() => {
+    const pending = pendingWorkspaceConversationRef.current;
+    if (!pending) return;
+    const targetProject = workspaceProjects.find(
+      (project) => workspaceProjectPathKey(project.path) === pending.targetPathKey,
+    );
+    if (
+      !targetProject ||
+      archivedWorkspaceProjectPathKeys.has(pending.targetPathKey) ||
+      !sidebarStore.peek(pending.conversationId)
+    ) {
+      pendingWorkspaceConversationRef.current = null;
+      return;
+    }
+    if (
+      workspaceProjectPathKey(activeWorkspaceProjectPath) !== pending.targetPathKey ||
+      historyScopeKey !== pending.targetScopeKey
+    ) {
+      return;
+    }
+    pendingWorkspaceConversationRef.current = null;
+    handleSelectConversation(pending.conversationId);
+  }, [
+    activeWorkspaceProjectPath,
+    archivedWorkspaceProjectPathKeys,
+    handleSelectConversation,
+    historyScopeKey,
+    sidebarStore,
+    workspaceProjects,
+  ]);
 
   // 托盘/快捷键动作参数的 ref 镜像：监听 effect 是 []-dep，闭包内一律
   // 经 ref 取最新值（handleSelectWorkspaceProject 等依赖 settings，不稳定）。
@@ -1816,8 +1903,12 @@ export function ChatPage(props: ChatPageProps) {
           projectRenameDraft={projectRenameDraft}
           projectsCollapsed={settings.customSettings.chatSidebar.projectsCollapsed}
           recentCollapsed={settings.customSettings.chatSidebar.recentCollapsed}
+          collapsedWorkspaceProjectPaths={
+            settings.customSettings.chatSidebar.collapsedWorkspaceProjectPaths
+          }
           onProjectsCollapsedChange={handleSidebarProjectsCollapsedChange}
           onRecentCollapsedChange={handleSidebarRecentCollapsedChange}
+          onWorkspaceProjectCollapsedChange={handleSidebarWorkspaceProjectCollapsedChange}
           onCreateProject={handleOpenCreateWorkspaceProject}
           onSelectProject={handleSelectWorkspaceProject}
           onNewConversationForProject={handleNewConversationForProject}
@@ -1844,7 +1935,13 @@ export function ChatPage(props: ChatPageProps) {
             setActiveView("chat");
             handleSelectConversation(id);
           }}
-          onConversationDeleted={handleConversationDeleted}
+          onSelectProjectConversation={handleSelectWorkspaceConversation}
+          onConversationDeleted={(id) => {
+            if (pendingWorkspaceConversationRef.current?.conversationId === id) {
+              pendingWorkspaceConversationRef.current = null;
+            }
+            handleConversationDeleted(id);
+          }}
           canShareConversations={canShareHistory}
           sharedConversationCount={sharedHistoryItems.length}
           onShareConversation={handleOpenShareModal}

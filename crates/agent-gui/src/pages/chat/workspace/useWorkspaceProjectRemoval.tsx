@@ -55,6 +55,7 @@ type UseWorkspaceProjectRemovalParams = {
   setRightDockOpen: Dispatch<SetStateAction<boolean>>;
   displayedConversationWorkdir: string;
   startNewConversationActionRef: MutableRefObject<(options?: { workdir?: string }) => void>;
+  cancelPendingWorkspaceConversationActionRef: MutableRefObject<() => void>;
 };
 
 /**
@@ -91,6 +92,7 @@ export function useWorkspaceProjectRemoval(params: UseWorkspaceProjectRemovalPar
     setRightDockOpen,
     displayedConversationWorkdir,
     startNewConversationActionRef,
+    cancelPendingWorkspaceConversationActionRef,
   } = params;
 
   const removeWorkspaceProjectFromSettings = useCallback(
@@ -164,6 +166,7 @@ export function useWorkspaceProjectRemoval(params: UseWorkspaceProjectRemovalPar
   const handleRemoveWorkspaceProject = useCallback(
     (project: WorkspaceProject) => {
       if (project.id === DEFAULT_WORKSPACE_PROJECT_ID) return;
+      cancelPendingWorkspaceConversationActionRef.current();
 
       void (async () => {
         const path = project.path.trim();
@@ -277,6 +280,7 @@ export function useWorkspaceProjectRemoval(params: UseWorkspaceProjectRemovalPar
       })();
     },
     [
+      cancelPendingWorkspaceConversationActionRef,
       deleteConversationLocalCaches,
       displayedConversationWorkdir,
       isConversationRunning,
@@ -291,6 +295,7 @@ export function useWorkspaceProjectRemoval(params: UseWorkspaceProjectRemovalPar
     (project: WorkspaceProject) => {
       const pathKey = workspaceProjectPathKey(project.path);
       if (!pathKey || archivedWorkspaceProjectPathKeys.has(pathKey)) return;
+      cancelPendingWorkspaceConversationActionRef.current();
       const fallbackProject = workspaceProjects.find(
         (item) =>
           item.id !== project.id &&
@@ -327,6 +332,7 @@ export function useWorkspaceProjectRemoval(params: UseWorkspaceProjectRemovalPar
       activateWorkspaceProject,
       activeWorkspaceProject,
       archivedWorkspaceProjectPathKeys,
+      cancelPendingWorkspaceConversationActionRef,
       setSettings,
       workspaceProjects,
     ],

@@ -19,6 +19,7 @@ import type {
   SidebarConversation,
   SidebarListStatus,
   SidebarMutationKind,
+  SidebarWorkspaceFeed,
 } from "../../lib/sidebar/types";
 import { AppUpdateButton } from "../AppUpdateButton";
 import {
@@ -58,6 +59,8 @@ import { Input } from "../ui/input";
 
 type ChatHistorySidebarProps = {
   items: readonly SidebarConversation[];
+  conversationById?: ReadonlyMap<string, SidebarConversation>;
+  workspaceFeeds?: ReadonlyMap<string, SidebarWorkspaceFeed>;
   currentConversationId: string;
   runningConversationIds: ReadonlySet<string>;
   // Rows with an in-flight mutation: only that row's controls are disabled.
@@ -89,8 +92,13 @@ type ChatHistorySidebarProps = {
   projectRenameDraft?: string;
   projectsCollapsed?: boolean;
   recentCollapsed?: boolean;
+  collapsedWorkspaceProjectPathKeys?: ReadonlySet<string>;
   onProjectsCollapsedChange?: (collapsed: boolean) => void;
   onRecentCollapsedChange?: (collapsed: boolean) => void;
+  onWorkspaceProjectCollapsedChange?: (project: WorkspaceProject, collapsed: boolean) => void;
+  onRetryWorkspaceFeed?: (project: WorkspaceProject) => void;
+  onLoadMoreWorkspaceFeed?: (project: WorkspaceProject) => void;
+  onCollapseWorkspaceFeed?: (project: WorkspaceProject) => void;
   onCreateProject?: () => void;
   onSelectProject?: (project: WorkspaceProject) => void;
   onNewConversationForProject?: (project: WorkspaceProject) => void;
@@ -109,6 +117,7 @@ type ChatHistorySidebarProps = {
   archivedProjectPathKeys?: ReadonlySet<string>;
   onNewConversation: () => void;
   onSelectConversation: (id: string) => void;
+  onSelectProjectConversation?: (project: WorkspaceProject, id: string) => void;
   onStartRenaming: (item: SidebarConversation) => void;
   onRenameDraftChange: (value: string) => void;
   onCommitRename: () => void;
@@ -143,6 +152,8 @@ const SIDEBAR_PROJECT_MIN_BODY_HEIGHT = 96;
 const SIDEBAR_RECENT_MIN_BODY_HEIGHT = 160;
 const PROJECT_LIST_COLLAPSED_MAX = 30;
 const EMPTY_PROJECT_PATH_KEYS = new Set<string>();
+const EMPTY_WORKSPACE_FEEDS = new Map<string, SidebarWorkspaceFeed>();
+const EMPTY_CONVERSATION_INDEX = new Map<string, SidebarConversation>();
 const HISTORY_LOADING_SKELETON_ROWS = [
   { title: "w-36", meta: "w-20" },
   { title: "w-44", meta: "w-24" },
@@ -502,7 +513,9 @@ const ProjectRow = memo(function ProjectRow(props: {
   isRunning: boolean;
   isRenaming: boolean;
   isPendingRemove: boolean;
+  isExpanded: boolean;
   renameDraft: string;
+  onToggleExpanded: (project: WorkspaceProject) => void;
   onSelectProject: (project: WorkspaceProject) => void;
   onBrowseProjectInFileTree?: (project: WorkspaceProject) => void;
   onBrowseProjectInSystemFileManager?: (project: WorkspaceProject) => void;
@@ -528,7 +541,9 @@ const ProjectRow = memo(function ProjectRow(props: {
     isRunning,
     isRenaming,
     isPendingRemove,
+    isExpanded,
     renameDraft,
+    onToggleExpanded,
     onSelectProject,
     onBrowseProjectInFileTree,
     onBrowseProjectInSystemFileManager,
@@ -641,7 +656,26 @@ const ProjectRow = memo(function ProjectRow(props: {
       )}
     >
       {isRenaming ? (
-        <div className="flex h-[30px] min-w-0 items-center gap-3 rounded-md px-2 text-left">
+        <div className="flex h-[30px] min-w-0 items-center rounded-md text-left">
+          {!isArchived ? (
+            <button
+              type="button"
+              onClick={() => onToggleExpanded(project)}
+              aria-expanded={isExpanded}
+              aria-label={
+                isExpanded
+                  ? t("chat.workspaceConversationsCollapse")
+                  : t("chat.workspaceConversationsExpand")
+              }
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-hidden hover:bg-foreground/[0.05] focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <ChevronRight
+                className={cn("h-3.5 w-3.5 transition-transform", isExpanded && "rotate-90")}
+              />
+            </button>
+          ) : (
+            <span className="h-7 w-7 shrink-0" />
+          )}
           <ProjectFolderIcon
             className={cn(
               "h-4 w-4 shrink-0 transition-colors",
@@ -682,8 +716,28 @@ const ProjectRow = memo(function ProjectRow(props: {
           />
         </div>
       ) : (
-        <Tooltip.Root>
-          <Tooltip.Trigger
+        <div className="flex min-w-0 items-center">
+          {!isArchived ? (
+            <button
+              type="button"
+              onClick={() => onToggleExpanded(project)}
+              aria-expanded={isExpanded}
+              aria-label={
+                isExpanded
+                  ? t("chat.workspaceConversationsCollapse")
+                  : t("chat.workspaceConversationsExpand")
+              }
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-hidden hover:bg-foreground/[0.05] focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <ChevronRight
+                className={cn("h-3.5 w-3.5 transition-transform", isExpanded && "rotate-90")}
+              />
+            </button>
+          ) : (
+            <span className="h-7 w-7 shrink-0" />
+          )}
+          <Tooltip.Root>
+            <Tooltip.Trigger
             delay={0}
             closeOnClick
             render={
@@ -752,7 +806,8 @@ const ProjectRow = memo(function ProjectRow(props: {
               </Tooltip.Popup>
             </Tooltip.Positioner>
           </Tooltip.Portal>
-        </Tooltip.Root>
+          </Tooltip.Root>
+        </div>
       )}
       {!isRenaming ? (
         <div
@@ -986,6 +1041,8 @@ function SidebarStateCard(props: {
 export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHistorySidebarProps) {
   const {
     items,
+    conversationById = EMPTY_CONVERSATION_INDEX,
+    workspaceFeeds = EMPTY_WORKSPACE_FEEDS,
     currentConversationId,
     runningConversationIds,
     busyConversationIds,
@@ -1010,8 +1067,13 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
     projectRenameDraft = "",
     projectsCollapsed = false,
     recentCollapsed = false,
+    collapsedWorkspaceProjectPathKeys = EMPTY_PROJECT_PATH_KEYS,
     onProjectsCollapsedChange,
     onRecentCollapsedChange,
+    onWorkspaceProjectCollapsedChange,
+    onRetryWorkspaceFeed,
+    onLoadMoreWorkspaceFeed,
+    onCollapseWorkspaceFeed,
     onCreateProject,
     onSelectProject,
     onBrowseProjectInFileTree,
@@ -1027,6 +1089,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
     archivedProjectPathKeys = EMPTY_PROJECT_PATH_KEYS,
     onNewConversation,
     onSelectConversation,
+    onSelectProjectConversation,
     onStartRenaming,
     onRenameDraftChange,
     onCommitRename,
@@ -1082,22 +1145,63 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
   // starts returning true and its continuation stops touching state.
   const bulkDeleteRunRef = useRef(0);
   const { confirm: requestBulkDeleteConfirm, dialog: bulkDeleteDialog } = useConfirmDialog();
-  const orderedConversationIds = useMemo(() => items.map((item) => item.id), [items]);
+  const visibleConversationItems = useMemo(() => {
+    if (!showProjects) return items;
+    if (projectsCollapsed) return [];
+    const activeWorkspaceProjects = projects.filter(
+      (project) => !archivedProjectPathKeys.has(workspaceProjectPathKey(project.path)),
+    );
+    const visibleProjects = showAllProjects
+      ? activeWorkspaceProjects
+      : activeWorkspaceProjects.slice(0, PROJECT_LIST_COLLAPSED_MAX);
+    const visibleItems: SidebarConversation[] = [];
+    for (const project of visibleProjects) {
+      const pathKey = workspaceProjectPathKey(project.path);
+      if (!pathKey || collapsedWorkspaceProjectPathKeys.has(pathKey)) continue;
+      const feed = workspaceFeeds.get(pathKey);
+      if (!feed) continue;
+      for (const id of feed.conversationIds.slice(0, feed.visibleLimit)) {
+        const item = conversationById.get(id);
+        if (item) visibleItems.push(item);
+      }
+    }
+    return visibleItems;
+  }, [
+    archivedProjectPathKeys,
+    collapsedWorkspaceProjectPathKeys,
+    conversationById,
+    items,
+    projects,
+    projectsCollapsed,
+    showAllProjects,
+    showProjects,
+    workspaceFeeds,
+  ]);
+  const orderedConversationIds = useMemo(
+    () => visibleConversationItems.map((item) => item.id),
+    [visibleConversationItems],
+  );
   const selectableConversationIds = useMemo(
     () =>
       new Set(
-        items
+        visibleConversationItems
           .filter(
             (item) => !runningConversationIds.has(item.id) && !busyConversationIds.has(item.id),
           )
           .map((item) => item.id),
       ),
-    [busyConversationIds, items, runningConversationIds],
+    [busyConversationIds, runningConversationIds, visibleConversationItems],
   );
   const handleSelectConversation = useStableEvent((id: string) => {
     selectionAnchorRef.current = id;
     onSelectConversation(id);
   });
+  const handleSelectProjectConversation = useStableEvent(
+    (project: WorkspaceProject, id: string) => {
+      selectionAnchorRef.current = id;
+      onSelectProjectConversation?.(project, id);
+    },
+  );
   const handleStartRenaming = useStableEvent(onStartRenaming);
   const handleRenameDraftChange = useStableEvent(onRenameDraftChange);
   const handleCommitRename = useStableEvent(onCommitRename);
@@ -1107,6 +1211,14 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
   const handleOpenSharedConversations = useStableEvent(onOpenSharedConversations);
   const handleDeleteConversation = useStableEvent(onDeleteConversation);
   const handleDeleteConversations = useStableEvent(onDeleteConversations);
+  const handleToggleWorkspaceProjectExpanded = useStableEvent((project: WorkspaceProject) => {
+    const pathKey = workspaceProjectPathKey(project.path);
+    if (!pathKey) return;
+    onWorkspaceProjectCollapsedChange?.(
+      project,
+      !collapsedWorkspaceProjectPathKeys.has(pathKey),
+    );
+  });
   const handleSelectProject = useStableEvent((project: WorkspaceProject) => {
     onSelectProject?.(project);
   });
@@ -1150,7 +1262,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
   const enterSelectionMode = useStableEvent((initialId?: string) => {
     setPendingDeleteId(null);
     handleCancelRename();
-    onRecentCollapsedChange?.(false);
+    if (!showProjects) onRecentCollapsedChange?.(false);
     setSelectionMode(true);
     if (initialId && selectableConversationIds.has(initialId)) {
       setSelectedConversationIds(new Set([initialId]));
@@ -1394,8 +1506,8 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: selection cannot cross sidebar scopes
   useEffect(() => {
-    exitSelectionMode();
-  }, [exitSelectionMode, scopeKey]);
+    if (!showProjects) exitSelectionMode();
+  }, [exitSelectionMode, scopeKey, showProjects]);
 
   useEffect(() => {
     setSelectedConversationIds((current) => {
@@ -1601,7 +1713,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
   );
 
   const renderHistoryRow = useCallback(
-    (item: SidebarConversation) => (
+    (item: SidebarConversation, project?: WorkspaceProject) => (
       <HistoryRow
         key={item.id}
         item={item}
@@ -1616,7 +1728,11 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
         isSelected={selectedConversationIds.has(item.id)}
         isSelectionDisabled={isBulkDeleting || !selectableConversationIds.has(item.id)}
         renameDraft={renamingId === item.id ? renameDraft : ""}
-        onSelectConversation={handleSelectConversation}
+        onSelectConversation={
+          project
+            ? (id) => handleSelectProjectConversation(project, id)
+            : handleSelectConversation
+        }
         onStartRenaming={handleStartRenaming}
         onRenameDraftChange={handleRenameDraftChange}
         onCommitRename={handleCommitRename}
@@ -1638,6 +1754,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
       handleSelectForBulk,
       handleRenameDraftChange,
       handleSelectConversation,
+      handleSelectProjectConversation,
       handleSetPinned,
       handleShareConversation,
       handleStartRenaming,
@@ -1653,6 +1770,130 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
       selectionMode,
     ],
   );
+
+  const renderWorkspaceProject = (project: WorkspaceProject) => {
+    const pathKey = workspaceProjectPathKey(project.path);
+    const feed = workspaceFeeds.get(pathKey);
+    const isExpanded = !collapsedWorkspaceProjectPathKeys.has(pathKey);
+    const visibleItems = feed
+      ? feed.conversationIds
+          .slice(0, feed.visibleLimit)
+          .map((id) => conversationById.get(id))
+          .filter((item): item is SidebarConversation => item !== undefined)
+      : [];
+    const isFeedLoading = feed?.status === "initial" || feed?.status === "loading";
+    const feedHasMore = feed
+      ? Math.min(feed.conversationIds.length, feed.visibleLimit) < feed.totalCount
+      : false;
+
+    return (
+      <div key={project.id} className="space-y-0.5">
+        <ProjectRow
+          project={project}
+          isActive={activeProjectId === project.id}
+          isMissing={missingProjectPathKeys.has(pathKey)}
+          isRunning={runningProjectPathKeys.has(pathKey)}
+          isRenaming={projectRenamingId === project.id}
+          isPendingRemove={pendingProjectRemoveId === project.id}
+          isExpanded={isExpanded}
+          renameDraft={projectRenameDraft}
+          onToggleExpanded={handleToggleWorkspaceProjectExpanded}
+          onSelectProject={handleSelectProject}
+          onBrowseProjectInFileTree={
+            onBrowseProjectInFileTree ? handleBrowseProjectInFileTree : undefined
+          }
+          onBrowseProjectInSystemFileManager={
+            onBrowseProjectInSystemFileManager
+              ? handleBrowseProjectInSystemFileManager
+              : undefined
+          }
+          onStartRenamingProject={handleStartRenamingProject}
+          onProjectRenameDraftChange={handleProjectRenameDraftChange}
+          onCommitProjectRename={handleCommitProjectRename}
+          onCancelProjectRename={handleCancelProjectRename}
+          onSetProjectPinned={handleSetProjectPinned}
+          onRemoveProject={handleRemoveProject}
+          isArchived={false}
+          canArchive={canArchiveProjects}
+          onArchiveProject={handleArchiveProject}
+          onUnarchiveProject={handleUnarchiveProject}
+          onSetPendingRemove={setPendingProjectRemoveId}
+        />
+        {isExpanded ? (
+          <div className="ml-7 border-l border-border/35 pl-1">
+            {isFeedLoading && visibleItems.length === 0 ? (
+              <div
+                role="status"
+                aria-label={t("chat.workspaceConversationsLoading")}
+                className="space-y-1 px-2 py-1.5 text-[calc(11px*var(--zone-font-scale,1))] text-muted-foreground"
+              >
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>{t("chat.workspaceConversationsLoading")}</span>
+                </div>
+                <div className="skills-skeleton-shimmer h-7 rounded-lg" />
+                <div className="skills-skeleton-shimmer h-7 rounded-lg" />
+              </div>
+            ) : (
+              <>
+                {feed?.status === "syncing" ? (
+                  <div className="flex items-center gap-2 px-2 py-1 text-[calc(11px*var(--zone-font-scale,1))] text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    <span>{t("chat.workspaceConversationsLoading")}</span>
+                  </div>
+                ) : null}
+                {visibleItems.map((item) => renderHistoryRow(item, project))}
+                {feed?.status === "ready" && visibleItems.length === 0 && !feed.error ? (
+                  <div className="px-2 py-2 text-[calc(11.5px*var(--zone-font-scale,1))] text-muted-foreground/70">
+                    {t("chat.workspaceConversationsEmpty")}
+                  </div>
+                ) : null}
+              </>
+            )}
+            {feed?.error ? (
+              <div className="flex items-center justify-between gap-2 px-2 py-1.5 text-[calc(11px*var(--zone-font-scale,1))] text-destructive">
+                <span className="min-w-0 truncate" title={feed.errorDetail ?? undefined}>
+                  {t(`chat.history.${feed.error}`)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onRetryWorkspaceFeed?.(project)}
+                  className="shrink-0 rounded-md px-1.5 py-1 font-medium hover:bg-destructive/10 focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {t("chat.workspaceConversationsRetry")}
+                </button>
+              </div>
+            ) : null}
+            {feed && visibleItems.length > 0 ? (
+              <div className="flex items-center gap-1 px-1 pb-1 pt-0.5">
+                {feed.visibleLimit > 5 ? (
+                  <button
+                    type="button"
+                    onClick={() => onCollapseWorkspaceFeed?.(project)}
+                    className="rounded-md px-2 py-1 text-[calc(11px*var(--zone-font-scale,1))] font-medium text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {t("chat.workspaceConversationsShowLatest")}
+                  </button>
+                ) : null}
+                {feedHasMore ? (
+                  <button
+                    type="button"
+                    onClick={() => onLoadMoreWorkspaceFeed?.(project)}
+                    disabled={feed.isLoadingMore}
+                    className="rounded-md px-2 py-1 text-[calc(11px*var(--zone-font-scale,1))] font-medium text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                  >
+                    {feed.isLoadingMore
+                      ? t("sidebar.loadingMoreHistory")
+                      : t("chat.workspaceConversationsLoadMore")}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <aside
@@ -1755,7 +1996,11 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
 
         <div
           ref={sidebarSectionsRef}
-          style={{ gridTemplateRows: sidebarSectionLayout.gridTemplateRows }}
+          style={{
+            gridTemplateRows: showProjects
+              ? "auto minmax(0, 1fr) auto"
+              : sidebarSectionLayout.gridTemplateRows,
+          }}
           className={cn(
             "grid min-h-0 flex-1 content-start",
             isProjectSectionResizing ? undefined : SIDEBAR_SECTION_ROWS_TRANSITION_CLASS,
@@ -1802,41 +2047,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
                 )}
               >
                 <div ref={projectsBodyRef} className="space-y-0.5 px-2 pb-0.5">
-                  {renderedProjects.map((project) => {
-                    const pathKey = workspaceProjectPathKey(project.path);
-                    return (
-                      <ProjectRow
-                        key={project.id}
-                        project={project}
-                        isActive={activeProjectId === project.id}
-                        isMissing={missingProjectPathKeys.has(pathKey)}
-                        isRunning={runningProjectPathKeys.has(pathKey)}
-                        isRenaming={projectRenamingId === project.id}
-                        isPendingRemove={pendingProjectRemoveId === project.id}
-                        renameDraft={projectRenameDraft}
-                        onSelectProject={handleSelectProject}
-                        onBrowseProjectInFileTree={
-                          onBrowseProjectInFileTree ? handleBrowseProjectInFileTree : undefined
-                        }
-                        onBrowseProjectInSystemFileManager={
-                          onBrowseProjectInSystemFileManager
-                            ? handleBrowseProjectInSystemFileManager
-                            : undefined
-                        }
-                        onStartRenamingProject={handleStartRenamingProject}
-                        onProjectRenameDraftChange={handleProjectRenameDraftChange}
-                        onCommitProjectRename={handleCommitProjectRename}
-                        onCancelProjectRename={handleCancelProjectRename}
-                        onSetProjectPinned={handleSetProjectPinned}
-                        onRemoveProject={handleRemoveProject}
-                        isArchived={false}
-                        canArchive={canArchiveProjects}
-                        onArchiveProject={handleArchiveProject}
-                        onUnarchiveProject={handleUnarchiveProject}
-                        onSetPendingRemove={setPendingProjectRemoveId}
-                      />
-                    );
-                  })}
+                  {renderedProjects.map(renderWorkspaceProject)}
                   {hiddenProjectCount > 0 || showAllProjects ? (
                     <button
                       type="button"
@@ -1881,7 +2092,9 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
                                 isRunning={runningProjectPathKeys.has(pathKey)}
                                 isRenaming={projectRenamingId === project.id}
                                 isPendingRemove={pendingProjectRemoveId === project.id}
+                                isExpanded={false}
                                 renameDraft={projectRenameDraft}
+                                onToggleExpanded={handleToggleWorkspaceProjectExpanded}
                                 onSelectProject={handleSelectProject}
                                 onBrowseProjectInFileTree={
                                   onBrowseProjectInFileTree
@@ -1912,31 +2125,19 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
                   ) : null}
                 </div>
               </div>
-              <button
-                ref={sectionResizeHandleRef}
-                type="button"
-                aria-label={t("chat.resizeSidebarSections")}
-                title={t("chat.resizeSidebarSections")}
-                disabled={!canResizeProjectSections}
-                onPointerDown={handleProjectSectionResizeStart}
-                className={cn(
-                  "group items-center justify-center border-0 bg-transparent p-0 focus-visible:outline-none",
-                  canResizeProjectSections
-                    ? "hidden h-2 cursor-row-resize touch-none md:flex"
-                    : "flex h-0 overflow-hidden",
-                )}
-              >
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "h-0.5 w-10 rounded-full bg-muted-foreground/25 opacity-70 shadow-sm transition-[width,background-color,opacity]",
-                    "group-hover:w-16 group-hover:bg-primary/60 group-hover:opacity-100 group-focus-visible:w-16 group-focus-visible:bg-primary group-focus-visible:opacity-100",
-                    isProjectSectionResizing && "w-20 bg-primary opacity-100",
-                    !canResizeProjectSections && "hidden",
-                  )}
-                />
-              </button>
             </>
+          ) : null}
+
+          {!showProjects ? (
+            <button
+              ref={sectionResizeHandleRef}
+              type="button"
+              tabIndex={-1}
+              aria-hidden="true"
+              disabled={!canResizeProjectSections}
+              onPointerDown={handleProjectSectionResizeStart}
+              className="hidden"
+            />
           ) : null}
 
           <div
@@ -1959,6 +2160,10 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
                     String(selectedConversationIds.size),
                   )}
                 </span>
+              </div>
+            ) : showProjects ? (
+              <div className="px-3 py-1 text-xs font-semibold text-muted-foreground">
+                {t("chat.workspaceSection")}
               </div>
             ) : (
               <button
@@ -2008,7 +2213,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
                 </>
               ) : (
                 <>
-                  {items.length > 0 ? (
+                  {visibleConversationItems.length > 0 ? (
                     <Button
                       type="button"
                       variant="ghost"
@@ -2046,7 +2251,8 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
             </div>
           </div>
 
-          <div
+          {!showProjects ? (
+            <div
             aria-hidden={recentCollapsed}
             inert={recentCollapsed}
             className={cn(
@@ -2128,7 +2334,8 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
                 </div>
               ) : null}
             </div>
-          </div>
+            </div>
+          ) : null}
         </div>
         <div className="shrink-0 border-t border-border/50 bg-[hsl(var(--sidebar-bg))] px-2 py-1.5">
           <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2">

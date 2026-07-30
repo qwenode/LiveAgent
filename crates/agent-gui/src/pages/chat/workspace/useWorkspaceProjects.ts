@@ -47,6 +47,7 @@ type UseWorkspaceProjectsParams = {
   startNewConversationActionRef: MutableRefObject<(options?: { workdir?: string }) => void>;
   prepareComposerForConversationChangeActionRef: MutableRefObject<() => void>;
   focusComposerAfterConversationChangeActionRef: MutableRefObject<() => void>;
+  cancelPendingWorkspaceConversationActionRef: MutableRefObject<() => void>;
 };
 
 /**
@@ -72,6 +73,7 @@ export function useWorkspaceProjects(params: UseWorkspaceProjectsParams) {
     startNewConversationActionRef,
     prepareComposerForConversationChangeActionRef,
     focusComposerAfterConversationChangeActionRef,
+    cancelPendingWorkspaceConversationActionRef,
   } = params;
 
   const sidebarWorkdirs = useSidebarSelector(sidebarStore, (s) => s.workdirs);
@@ -272,27 +274,39 @@ export function useWorkspaceProjects(params: UseWorkspaceProjectsParams) {
 
   const handleSelectWorkspaceProject = useCallback(
     async (project: WorkspaceProject) => {
+      cancelPendingWorkspaceConversationActionRef.current();
       if (!(await checkWorkspaceProjectDirectory(project))) {
         return;
       }
       activateWorkspaceProject(project);
     },
-    [activateWorkspaceProject, checkWorkspaceProjectDirectory],
+    [
+      activateWorkspaceProject,
+      cancelPendingWorkspaceConversationActionRef,
+      checkWorkspaceProjectDirectory,
+    ],
   );
 
   const handleNewConversationForProject = useCallback(
     async (project: WorkspaceProject) => {
+      cancelPendingWorkspaceConversationActionRef.current();
       if (!(await checkWorkspaceProjectDirectory(project))) {
         return;
       }
       setActiveView("chat");
       activateWorkspaceProject(project, { startConversation: true });
     },
-    [activateWorkspaceProject, checkWorkspaceProjectDirectory],
+    [
+      activateWorkspaceProject,
+      cancelPendingWorkspaceConversationActionRef,
+      checkWorkspaceProjectDirectory,
+      setActiveView,
+    ],
   );
 
   const handleBrowseWorkspaceProjectInFileTree = useCallback(
     async (project: WorkspaceProject) => {
+      cancelPendingWorkspaceConversationActionRef.current();
       if (!(await checkWorkspaceProjectDirectory(project))) {
         return;
       }
@@ -306,7 +320,14 @@ export function useWorkspaceProjects(params: UseWorkspaceProjectsParams) {
       activateWorkspaceProject(project);
       setSettings((prev) => openRightDockSingletonTab(prev, pathKey, "fileTree"));
     },
-    [activateWorkspaceProject, checkWorkspaceProjectDirectory, setSettings],
+    [
+      activateWorkspaceProject,
+      cancelPendingWorkspaceConversationActionRef,
+      checkWorkspaceProjectDirectory,
+      setActiveView,
+      setRightDockOpen,
+      setSettings,
+    ],
   );
 
   const ensureTunnelToolTab = useCallback(
@@ -351,6 +372,7 @@ export function useWorkspaceProjects(params: UseWorkspaceProjectsParams) {
   }, []);
 
   const handleOpenWorkspaceFolder = useCallback(async () => {
+    cancelPendingWorkspaceConversationActionRef.current();
     try {
       const picked = await invoke<string | null>("system_pick_folder", {
         initial_workdir: activeWorkspaceProjectPath || workdir,
@@ -361,7 +383,13 @@ export function useWorkspaceProjects(params: UseWorkspaceProjectsParams) {
     } catch (error) {
       setErrorMessage(asErrorMessage(error, "选择项目目录失败"));
     }
-  }, [activateWorkspaceProject, activeWorkspaceProjectPath, workdir, setErrorMessage]);
+  }, [
+    activateWorkspaceProject,
+    activeWorkspaceProjectPath,
+    cancelPendingWorkspaceConversationActionRef,
+    setErrorMessage,
+    workdir,
+  ]);
 
   const handleCloneWorkspaceProject = useCallback(
     async (remoteUrl: string, parent: string, name: string, branch: string) => {
@@ -376,8 +404,11 @@ export function useWorkspaceProjects(params: UseWorkspaceProjectsParams) {
   );
 
   const handleOpenClonedWorkspace = useCallback(
-    (path: string) => activateWorkspaceProject(createWorkspaceProjectFromPath(path, "managed")),
-    [activateWorkspaceProject],
+    (path: string) => {
+      cancelPendingWorkspaceConversationActionRef.current();
+      activateWorkspaceProject(createWorkspaceProjectFromPath(path, "managed"));
+    },
+    [activateWorkspaceProject, cancelPendingWorkspaceConversationActionRef],
   );
 
   const handleLoadWorkspaceRemoteBranches = useCallback(
@@ -524,6 +555,29 @@ export function useWorkspaceProjects(params: UseWorkspaceProjectsParams) {
     [setSettings],
   );
 
+  const handleSidebarWorkspaceProjectCollapsedChange = useCallback(
+    (project: WorkspaceProject, collapsed: boolean) => {
+      const pathKey = workspaceProjectPathKey(project.path);
+      if (!pathKey) return;
+      setSettings((prev) => {
+        const current = prev.customSettings.chatSidebar.collapsedWorkspaceProjectPaths;
+        const collapsedWorkspaceProjectPaths = collapsed
+          ? current.includes(pathKey)
+            ? current
+            : [...current, pathKey]
+          : current.filter((item) => item !== pathKey);
+        if (collapsedWorkspaceProjectPaths === current) return prev;
+        return updateCustomSettings(prev, {
+          chatSidebar: {
+            ...prev.customSettings.chatSidebar,
+            collapsedWorkspaceProjectPaths,
+          },
+        });
+      });
+    },
+    [setSettings],
+  );
+
   return {
     workspaceProjects,
     activeWorkspaceProjectId,
@@ -560,5 +614,6 @@ export function useWorkspaceProjects(params: UseWorkspaceProjectsParams) {
     handleSetWorkspaceProjectPinned,
     handleSidebarProjectsCollapsedChange,
     handleSidebarRecentCollapsedChange,
+    handleSidebarWorkspaceProjectCollapsedChange,
   };
 }

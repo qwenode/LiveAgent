@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatHistorySidebar } from "@/components/chat/ChatHistorySidebar";
 import { useLocale } from "@/i18n";
 import type { ChatHistorySummary } from "@/lib/chat/chatHistory";
-import type { WorkspaceProject } from "@/lib/settings";
+import { type WorkspaceProject, workspaceProjectPathKey } from "@/lib/settings";
 import type { SidebarBatchDeleteOptions } from "@/lib/sidebar/batchDelete";
 import { deleteSidebarConversations } from "@/lib/sidebar/batchDelete";
 import {
@@ -15,10 +15,11 @@ import {
   selectListState,
   selectProjectActivityInputs,
   selectRunningConversationIds,
+  selectWorkspaceFeeds,
   sidebarShallowEqual,
 } from "@/lib/sidebar/selectors";
 import type { SidebarSnapshot, SidebarStore } from "@/lib/sidebar/store";
-import type { SidebarErrorCode } from "@/lib/sidebar/types";
+import type { SidebarErrorCode, SidebarWorkspaceFeed } from "@/lib/sidebar/types";
 import { useSidebarSelector } from "@/lib/sidebar/useSidebarSelector";
 import { sortWorkspaceProjectsByActivity } from "@/lib/workspaceProjects";
 
@@ -88,6 +89,7 @@ export type GatewaySidebarContainerProps = {
   projectRenameDraft: string;
   projectsCollapsed: boolean;
   recentCollapsed: boolean;
+  collapsedWorkspaceProjectPaths: readonly string[];
   canShareConversations: boolean;
   sharedConversationCount: number;
   // GatewayApp-level sidebar errors (project removal flow); store errors are
@@ -102,6 +104,7 @@ export type GatewaySidebarContainerProps = {
   isLocalDraftConversationId: (id: string) => boolean;
   onProjectsCollapsedChange: (collapsed: boolean) => void;
   onRecentCollapsedChange: (collapsed: boolean) => void;
+  onWorkspaceProjectCollapsedChange: (project: WorkspaceProject, collapsed: boolean) => void;
   onCreateProject: () => void;
   onSelectProject: (project: WorkspaceProject) => void;
   onNewConversationForProject: (project: WorkspaceProject) => void;
@@ -117,6 +120,7 @@ export type GatewaySidebarContainerProps = {
   archivedProjectPathKeys?: ReadonlySet<string>;
   onNewConversation: () => void;
   onSelectConversation: (id: string) => void;
+  onSelectProjectConversation: (project: WorkspaceProject, id: string) => void;
   onShareConversation: (item: ChatHistorySummary) => void;
   onOpenSharedConversations: () => void;
   // User-initiated removal of a local draft row (never hits the backend).
@@ -143,6 +147,7 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
   const { t } = useLocale();
 
   const items = useSidebarSelector(store, selectConversations);
+  const workspaceFeeds = useSidebarSelector(store, selectWorkspaceFeeds);
   const listState = useSidebarSelector(store, selectListState, sidebarShallowEqual);
   const scopeKey = useSidebarSelector(store, (snapshot) => snapshot.scopeKey);
   const runningConversationIds = useSidebarSelector(store, selectRunningConversationIds);
@@ -308,6 +313,20 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
     }
     return externalErrorMessage;
   }, [connectionLost, externalErrorMessage, mutationErrors, translateErrorCode]);
+  const visibleWorkspaceFeeds = useMemo(() => {
+    let filteredFeeds: Map<string, SidebarWorkspaceFeed> | null = null;
+    for (const [pathKey, feed] of workspaceFeeds) {
+      if (
+        !feed.error ||
+        (!connectionLost && !isGatewayTransportErrorDetail(feed.errorDetail))
+      ) {
+        continue;
+      }
+      filteredFeeds ??= new Map(workspaceFeeds);
+      filteredFeeds.set(pathKey, { ...feed, error: null, errorDetail: null });
+    }
+    return filteredFeeds ?? workspaceFeeds;
+  }, [connectionLost, workspaceFeeds]);
 
   // --- Projects -------------------------------------------------------------
   const sortedProjects = useMemo(
@@ -318,10 +337,75 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
       }),
     [projectActivityInputs.runningWorkdirPathKeys, projectActivityInputs.workdirActivity, projects],
   );
+  const collapsedWorkspaceProjectPathKeys = useMemo(
+    () => new Set(props.collapsedWorkspaceProjectPaths),
+    [props.collapsedWorkspaceProjectPaths],
+  );
+  const workspaceFeedRefreshTargets = useMemo(
+    () =>
+      sortedProjects.flatMap((project) => {
+        const pathKey = workspaceProjectPathKey(project.path);
+        if (
+          !pathKey ||
+          props.archivedProjectPathKeys?.has(pathKey) ||
+          props.missingProjectPathKeys.has(pathKey)
+        ) {
+          return [];
+        }
+        return [{ pathKey, cwd: project.path }];
+      }),
+    [props.archivedProjectPathKeys, props.missingProjectPathKeys, sortedProjects],
+  );
+  const expandedWorkspaceFeedTargets = useMemo(
+    () =>
+      workspaceFeedRefreshTargets.filter(
+        (target) => !collapsedWorkspaceProjectPathKeys.has(target.pathKey),
+      ),
+    [collapsedWorkspaceProjectPathKeys, workspaceFeedRefreshTargets],
+  );
+
+  useEffect(() => {
+    store.setWorkspaceFeedRefreshTargets(props.showProjects ? workspaceFeedRefreshTargets : []);
+  }, [props.showProjects, store, workspaceFeedRefreshTargets]);
+
+  useEffect(() => {
+    if (
+      sectionsDisabled ||
+      !props.showProjects ||
+      props.projectsCollapsed ||
+      expandedWorkspaceFeedTargets.length === 0
+    ) {
+      return;
+    }
+    void store.ensureWorkspaceFeeds(expandedWorkspaceFeedTargets);
+  }, [
+    expandedWorkspaceFeedTargets,
+    props.projectsCollapsed,
+    props.showProjects,
+    sectionsDisabled,
+    store,
+  ]);
+
+  const handleRetryWorkspaceFeed = useStableCallback((project: WorkspaceProject) => {
+    if (sectionsDisabled) return;
+    const pathKey = workspaceProjectPathKey(project.path);
+    if (pathKey) void store.retryWorkspaceFeed({ pathKey, cwd: project.path });
+  });
+  const handleLoadMoreWorkspaceFeed = useStableCallback((project: WorkspaceProject) => {
+    if (sectionsDisabled) return;
+    const pathKey = workspaceProjectPathKey(project.path);
+    if (pathKey) void store.loadMoreWorkspaceFeed({ pathKey, cwd: project.path });
+  });
+  const handleCollapseWorkspaceFeed = useStableCallback((project: WorkspaceProject) => {
+    if (sectionsDisabled) return;
+    store.collapseWorkspaceFeed(workspaceProjectPathKey(project.path));
+  });
 
   return (
     <ChatHistorySidebar
       items={items}
+      conversationById={conversationIndex}
+      workspaceFeeds={visibleWorkspaceFeeds}
       currentConversationId={props.currentConversationId}
       busyConversationIds={mutations}
       runningConversationIds={runningConversationIds}
@@ -347,8 +431,13 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
       projectRenameDraft={props.projectRenameDraft}
       projectsCollapsed={props.projectsCollapsed}
       recentCollapsed={props.recentCollapsed}
+      collapsedWorkspaceProjectPathKeys={collapsedWorkspaceProjectPathKeys}
       onProjectsCollapsedChange={props.onProjectsCollapsedChange}
       onRecentCollapsedChange={props.onRecentCollapsedChange}
+      onWorkspaceProjectCollapsedChange={props.onWorkspaceProjectCollapsedChange}
+      onRetryWorkspaceFeed={handleRetryWorkspaceFeed}
+      onLoadMoreWorkspaceFeed={handleLoadMoreWorkspaceFeed}
+      onCollapseWorkspaceFeed={handleCollapseWorkspaceFeed}
       onCreateProject={props.onCreateProject}
       onSelectProject={props.onSelectProject}
       onNewConversationForProject={props.onNewConversationForProject}
@@ -364,6 +453,7 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
       archivedProjectPathKeys={props.archivedProjectPathKeys}
       onNewConversation={props.onNewConversation}
       onSelectConversation={props.onSelectConversation}
+      onSelectProjectConversation={props.onSelectProjectConversation}
       onStartRenaming={handleStartRenaming}
       onRenameDraftChange={setRenameDraft}
       onCommitRename={handleCommitRename}
