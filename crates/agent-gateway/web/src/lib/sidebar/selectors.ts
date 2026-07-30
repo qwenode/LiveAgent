@@ -3,10 +3,34 @@
 // between agent-gui and agent-gateway/web.
 
 import type { SidebarSnapshot } from "./store";
-import type { SidebarMutationKind } from "./types";
+import type { SidebarMutationKind, SidebarWorkspaceFeed } from "./types";
 
 export function selectConversations(snapshot: SidebarSnapshot) {
   return snapshot.conversations;
+}
+
+export function selectConversationIndex(snapshot: SidebarSnapshot) {
+  return snapshot.byId;
+}
+
+export function selectWorkspaceFeeds(snapshot: SidebarSnapshot) {
+  return snapshot.workspaceFeeds;
+}
+
+export function selectWorkspaceFeed(snapshot: SidebarSnapshot, pathKey: string) {
+  return snapshot.workspaceFeeds.get(pathKey) ?? null;
+}
+
+export function workspaceFeedHasMore(feed: SidebarWorkspaceFeed) {
+  return Math.min(feed.conversationIds.length, feed.visibleLimit) < feed.totalCount;
+}
+
+export function selectWorkspaceFeedConversations(snapshot: SidebarSnapshot, pathKey: string) {
+  const feed = selectWorkspaceFeed(snapshot, pathKey);
+  if (!feed) return [];
+  return feed.conversationIds
+    .map((id) => snapshot.byId.get(id))
+    .filter((item) => item !== undefined);
 }
 
 export function selectListState(snapshot: SidebarSnapshot) {

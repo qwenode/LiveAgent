@@ -30,10 +30,10 @@ import type {
   SidebarMutationKind,
   SidebarRunningItem,
   SidebarScope,
+  SidebarWorkdirSummary,
   SidebarWorkspaceFeed,
   SidebarWorkspaceFeedErrorCode,
   SidebarWorkspaceFeedTarget,
-  SidebarWorkdirSummary,
 } from "./types";
 
 const DEFAULT_PAGE_SIZE = 80;
@@ -81,6 +81,7 @@ export type SidebarStore = {
   setScope(scope: SidebarScope): void;
   refresh(options?: { reason?: SidebarRefreshReason }): Promise<void>;
   loadMore(): Promise<void>;
+  setWorkspaceFeedRefreshTargets(targets: readonly SidebarWorkspaceFeedTarget[]): void;
   ensureWorkspaceFeeds(
     targets: readonly SidebarWorkspaceFeedTarget[],
     options?: { force?: boolean },
@@ -171,6 +172,7 @@ export function createSidebarStore(
 
   let startCount = 0;
   let requestSeq = 0;
+  let workspaceFeedSeq = 0;
   // A first-page refresh supersedes every older pagination request for the
   // same scope. This is separate from requestSeq (scope/lifecycle invalidation):
   // reconnect refreshes do not change scope, but they must still prevent a
@@ -185,6 +187,7 @@ export function createSidebarStore(
   let activeWorkspaceFeedRequests = 0;
   const activeWorkspaceFeedPathKeys = new Set<string>();
   const workspaceFeedWaiters = new Map<string, Set<() => void>>();
+  let workspaceFeedRefreshTargets = new Map<string, SidebarWorkspaceFeedTarget>();
   let workdirsInFlight = false;
   let workdirsQueued = false;
   let wasDisconnected = false;
@@ -432,7 +435,7 @@ export function createSidebarStore(
       });
       const current = snapshot.workspaceFeeds.get(request.pathKey);
       if (
-        request.seq !== requestSeq ||
+        request.seq !== workspaceFeedSeq ||
         startCount === 0 ||
         !current ||
         current.requestGeneration !== request.generation
@@ -474,7 +477,7 @@ export function createSidebarStore(
     } catch (error) {
       const current = snapshot.workspaceFeeds.get(request.pathKey);
       if (
-        request.seq !== requestSeq ||
+        request.seq !== workspaceFeedSeq ||
         startCount === 0 ||
         !current ||
         current.requestGeneration !== request.generation
@@ -545,7 +548,7 @@ export function createSidebarStore(
       target: requestTarget,
       kind,
       generation,
-      seq: requestSeq,
+      seq: workspaceFeedSeq,
     };
     if (queuedIndex >= 0) {
       const queued = workspaceFeedQueue[queuedIndex]!;
@@ -561,6 +564,197 @@ export function createSidebarStore(
       workspaceFeedQueue.push(request);
     }
     drainWorkspaceFeedQueue();
+  };
+
+  const ensureWorkspaceFeeds = async (
+    targets: readonly SidebarWorkspaceFeedTarget[],
+    ensureOptions?: { force?: boolean },
+  ) => {
+    const normalizedByPathKey = new Map<string, SidebarWorkspaceFeedTarget>();
+    for (const target of targets) {
+      const normalized = normalizeWorkspaceFeedTarget(target);
+      if (normalized) normalizedByPathKey.set(normalized.pathKey, normalized);
+    }
+    const normalizedTargets = Array.from(normalizedByPathKey.values());
+    if (normalizedTargets.length === 0) {
+      return;
+    }
+
+    let workspaceFeeds: ReadonlyMap<string, SidebarWorkspaceFeed> = snapshot.workspaceFeeds;
+    for (const target of normalizedTargets) {
+      if (workspaceFeeds.has(target.pathKey)) continue;
+      if (workspaceFeeds === snapshot.workspaceFeeds) {
+        workspaceFeeds = new Map(workspaceFeeds);
+      }
+      (workspaceFeeds as Map<string, SidebarWorkspaceFeed>).set(
+        target.pathKey,
+        createWorkspaceFeed(target),
+      );
+    }
+    workspaceFeeds = syncActiveWorkspaceFeed(workspaceFeeds, {
+      conversations: snapshot.conversations,
+      totalCount: snapshot.totalCount,
+      listStatus: snapshot.listStatus,
+      isLoadingMore: snapshot.isLoadingMore,
+      listError: snapshot.listError,
+      listErrorDetail: snapshot.listErrorDetail,
+    });
+    if (workspaceFeeds !== snapshot.workspaceFeeds) {
+      commit({ workspaceFeeds });
+    }
+
+    let refreshActiveScope = false;
+    for (const target of normalizedTargets) {
+      const current = snapshot.workspaceFeeds.get(target.pathKey);
+      if (!current || startCount === 0) continue;
+      const isActiveScope =
+        scope.kind === "workdir" && workspaceProjectPathKey(scope.cwd) === target.pathKey;
+      if (isActiveScope) {
+        refreshActiveScope ||= ensureOptions?.force === true;
+        continue;
+      }
+      const hasPendingRequest =
+        activeWorkspaceFeedPathKeys.has(target.pathKey) ||
+        hasQueuedWorkspaceFeedRequest(target.pathKey);
+      if (ensureOptions?.force === true) {
+        enqueueWorkspaceFeedRequest(
+          target,
+          Math.max(WORKSPACE_FEED_INITIAL_LIMIT, current.visibleLimit),
+          "listFailed",
+        );
+        continue;
+      }
+      if (hasPendingRequest) continue;
+      if (current.status === "initial") {
+        enqueueWorkspaceFeedRequest(
+          target,
+          Math.max(WORKSPACE_FEED_INITIAL_LIMIT, current.visibleLimit),
+          "listFailed",
+        );
+      }
+    }
+
+    const waits = normalizedTargets.map((target) => waitForWorkspaceFeedIdle(target.pathKey));
+    if (refreshActiveScope) {
+      waits.push(fetchFirstPage(false));
+    }
+    await Promise.all(waits);
+  };
+
+  const setWorkspaceFeedRefreshTargets = (targets: readonly SidebarWorkspaceFeedTarget[]) => {
+    const nextTargets = new Map<string, SidebarWorkspaceFeedTarget>();
+    const restoredTargets: SidebarWorkspaceFeedTarget[] = [];
+    for (const target of targets) {
+      const normalized = normalizeWorkspaceFeedTarget(target);
+      if (!normalized) continue;
+      nextTargets.set(normalized.pathKey, normalized);
+      if (
+        !workspaceFeedRefreshTargets.has(normalized.pathKey) &&
+        snapshot.workspaceFeeds.has(normalized.pathKey)
+      ) {
+        restoredTargets.push(normalized);
+      }
+    }
+
+    const removedPathKeys = Array.from(workspaceFeedRefreshTargets.keys()).filter(
+      (pathKey) => !nextTargets.has(pathKey),
+    );
+    workspaceFeedRefreshTargets = nextTargets;
+    if (removedPathKeys.length > 0) {
+      const removedPathKeySet = new Set(removedPathKeys);
+      workspaceFeedQueue = workspaceFeedQueue.filter(
+        (request) => !removedPathKeySet.has(request.pathKey),
+      );
+      let workspaceFeeds: Map<string, SidebarWorkspaceFeed> | null = null;
+      for (const pathKey of removedPathKeys) {
+        const current = snapshot.workspaceFeeds.get(pathKey);
+        if (!current) continue;
+        workspaceFeeds ??= new Map(snapshot.workspaceFeeds);
+        workspaceFeeds.set(pathKey, {
+          ...current,
+          status: current.conversationIds.length > 0 ? "ready" : "initial",
+          isLoadingMore: false,
+          requestGeneration: current.requestGeneration + 1,
+        });
+      }
+      if (workspaceFeeds) commit({ workspaceFeeds });
+      for (const pathKey of removedPathKeys) settleWorkspaceFeedWaiters(pathKey);
+    }
+    if (restoredTargets.length > 0) {
+      void ensureWorkspaceFeeds(restoredTargets, { force: true });
+    }
+  };
+
+  const retryWorkspaceFeed = async (target: SidebarWorkspaceFeedTarget) => {
+    const normalized = normalizeWorkspaceFeedTarget(target);
+    if (!normalized || startCount === 0) return;
+    const current = snapshot.workspaceFeeds.get(normalized.pathKey);
+    if (!current) {
+      await ensureWorkspaceFeeds([normalized]);
+      return;
+    }
+    if (
+      activeWorkspaceFeedPathKeys.has(normalized.pathKey) ||
+      hasQueuedWorkspaceFeedRequest(normalized.pathKey)
+    ) {
+      await waitForWorkspaceFeedIdle(normalized.pathKey);
+      return;
+    }
+    if (scope.kind === "workdir" && workspaceProjectPathKey(scope.cwd) === normalized.pathKey) {
+      await fetchFirstPage(false);
+      return;
+    }
+    enqueueWorkspaceFeedRequest(
+      normalized,
+      Math.max(WORKSPACE_FEED_INITIAL_LIMIT, current.visibleLimit),
+      current.error ?? "listFailed",
+    );
+    await waitForWorkspaceFeedIdle(normalized.pathKey);
+  };
+
+  const loadMoreWorkspaceFeed = async (target: SidebarWorkspaceFeedTarget) => {
+    const normalized = normalizeWorkspaceFeedTarget(target);
+    if (!normalized || startCount === 0) return;
+    if (!snapshot.workspaceFeeds.has(normalized.pathKey)) {
+      await ensureWorkspaceFeeds([normalized]);
+    }
+    const current = snapshot.workspaceFeeds.get(normalized.pathKey);
+    if (!current || current.isLoadingMore) return;
+    if (
+      activeWorkspaceFeedPathKeys.has(normalized.pathKey) ||
+      hasQueuedWorkspaceFeedRequest(normalized.pathKey)
+    ) {
+      await waitForWorkspaceFeedIdle(normalized.pathKey);
+      return;
+    }
+
+    const visibleLimit = current.visibleLimit + WORKSPACE_FEED_LOAD_MORE_INCREMENT;
+    const workspaceFeeds = new Map(snapshot.workspaceFeeds);
+    workspaceFeeds.set(normalized.pathKey, { ...current, visibleLimit });
+    commit({ workspaceFeeds });
+    const needsMoreRows =
+      current.conversationIds.length < visibleLimit &&
+      (current.totalCount === 0 || current.conversationIds.length < current.totalCount);
+    if (!needsMoreRows) return;
+
+    if (scope.kind === "workdir" && workspaceProjectPathKey(scope.cwd) === normalized.pathKey) {
+      await loadMore();
+      return;
+    }
+    enqueueWorkspaceFeedRequest(normalized, visibleLimit, "loadMoreFailed");
+    await waitForWorkspaceFeedIdle(normalized.pathKey);
+  };
+
+  const collapseWorkspaceFeed = (pathKey: string) => {
+    const normalizedPathKey = workspaceProjectPathKey(pathKey);
+    const current = snapshot.workspaceFeeds.get(normalizedPathKey);
+    if (!current || current.visibleLimit === WORKSPACE_FEED_INITIAL_LIMIT) return;
+    const workspaceFeeds = new Map(snapshot.workspaceFeeds);
+    workspaceFeeds.set(normalizedPathKey, {
+      ...current,
+      visibleLimit: WORKSPACE_FEED_INITIAL_LIMIT,
+    });
+    commit({ workspaceFeeds });
   };
 
   const knownWorkdirPathKeys = () => {
@@ -767,8 +961,24 @@ export function createSidebarStore(
       loadedPageCount = 0;
       return;
     }
+    let workspaceFeeds = snapshot.workspaceFeeds;
+    if (requestScope.kind === "workdir") {
+      const pathKey = workspaceProjectPathKey(requestScope.cwd);
+      const feed = workspaceFeeds.get(pathKey);
+      if (feed) {
+        workspaceFeedQueue = workspaceFeedQueue.filter((request) => request.pathKey !== pathKey);
+        const nextWorkspaceFeeds = new Map(workspaceFeeds);
+        nextWorkspaceFeeds.set(pathKey, {
+          ...feed,
+          requestGeneration: feed.requestGeneration + 1,
+        });
+        workspaceFeeds = nextWorkspaceFeeds;
+        settleWorkspaceFeedWaiters(pathKey);
+      }
+    }
     const hasRows = snapshot.conversations.length > 0;
     commitScopedState({
+      workspaceFeeds,
       listStatus: hasRows ? "syncing" : "loading",
       // The new first page owns pagination truth now. An older loadMore may
       // still settle at the transport layer, but its generation is stale and
@@ -899,16 +1109,18 @@ export function createSidebarStore(
     byId = new Map(byId);
     if (optimistic) {
       byId.set(id, optimistic);
+      const workspaceFeeds = updateWorkspaceFeedsForConversation(previous, optimistic);
       const rest = snapshot.conversations.filter((item) => item.id !== id);
       const next = conversationMatchesScope(optimistic, scope)
         ? sortSidebarConversations([optimistic, ...rest])
         : rest;
-      commitScopedList(next, { mutations, mutationErrors });
+      commitScopedList(next, { mutations, mutationErrors, workspaceFeeds });
     } else {
       byId.delete(id);
+      const workspaceFeeds = updateWorkspaceFeedsForConversation(previous, undefined);
       commitScopedList(
         snapshot.conversations.filter((item) => item.id !== id),
-        { mutations, mutationErrors },
+        { mutations, mutationErrors, workspaceFeeds },
       );
     }
 
@@ -918,16 +1130,18 @@ export function createSidebarStore(
       nextMutations.delete(id);
       if (confirmed) {
         positionLocks.set(id, now() + positionLockMs);
-        const merged = mergeSidebarConversation(byId.get(id), confirmed, {
+        const optimisticCurrent = byId.get(id);
+        const merged = mergeSidebarConversation(optimisticCurrent, confirmed, {
           preserveExistingUpdatedAt: true,
         });
         byId = new Map(byId);
         byId.set(id, merged);
+        const workspaceFeeds = updateWorkspaceFeedsForConversation(optimisticCurrent, merged);
         const rest = snapshot.conversations.filter((item) => item.id !== id);
         const next = conversationMatchesScope(merged, scope)
           ? sortSidebarConversations([merged, ...rest])
           : rest;
-        commitScopedList(next, { mutations: nextMutations });
+        commitScopedList(next, { mutations: nextMutations, workspaceFeeds });
       } else {
         commit({ mutations: nextMutations, byId });
       }
@@ -938,13 +1152,19 @@ export function createSidebarStore(
       nextMutations.delete(id);
       const nextErrors = new Map(snapshot.mutationErrors);
       nextErrors.set(id, failureCode);
+      const optimisticCurrent = byId.get(id);
       byId = new Map(byId);
       byId.set(id, previous);
+      const workspaceFeeds = updateWorkspaceFeedsForConversation(optimisticCurrent, previous);
       const rest = snapshot.conversations.filter((item) => item.id !== id);
       const next = conversationMatchesScope(previous, scope)
         ? sortSidebarConversations([previous, ...rest])
         : rest;
-      commitScopedList(next, { mutations: nextMutations, mutationErrors: nextErrors });
+      commitScopedList(next, {
+        mutations: nextMutations,
+        mutationErrors: nextErrors,
+        workspaceFeeds,
+      });
       return false;
     }
   };
@@ -1049,6 +1269,12 @@ export function createSidebarStore(
           if (wasDisconnected) {
             wasDisconnected = false;
             void fetchFirstPage(false);
+            const activePathKey =
+              scope.kind === "workdir" ? workspaceProjectPathKey(scope.cwd) : "";
+            const feedTargets = Array.from(workspaceFeedRefreshTargets.values()).filter(
+              (target) => target.pathKey !== activePathKey,
+            );
+            void ensureWorkspaceFeeds(feedTargets, { force: true });
             void refreshWorkdirs("reconnect");
           }
         }) ?? null;
@@ -1071,6 +1297,7 @@ export function createSidebarStore(
         return;
       }
       requestSeq += 1;
+      workspaceFeedSeq += 1;
       listGeneration += 1;
       unsubscribeEvents?.();
       unsubscribeEvents = null;
@@ -1090,6 +1317,11 @@ export function createSidebarStore(
       }
       queuedListRequest = null;
       loadMoreRequestToken = null;
+      const queuedWorkspaceFeedPathKeys = new Set(
+        workspaceFeedQueue.map((request) => request.pathKey),
+      );
+      workspaceFeedQueue = [];
+      for (const pathKey of queuedWorkspaceFeedPathKeys) settleWorkspaceFeedWaiters(pathKey);
       workdirsQueued = false;
       wasDisconnected = false;
     },
@@ -1123,6 +1355,11 @@ export function createSidebarStore(
 
     refresh,
     loadMore,
+    setWorkspaceFeedRefreshTargets,
+    ensureWorkspaceFeeds,
+    retryWorkspaceFeed,
+    loadMoreWorkspaceFeed,
+    collapseWorkspaceFeed,
     refreshWorkdirs,
 
     rename: (id, title) =>
@@ -1176,9 +1413,11 @@ export function createSidebarStore(
     },
 
     upsertLocal: (conversation) => {
-      const merged = mergeSidebarConversation(byId.get(conversation.id), conversation);
+      const previous = byId.get(conversation.id);
+      const merged = mergeSidebarConversation(previous, conversation);
       byId = new Map(byId);
       byId.set(merged.id, merged);
+      const workspaceFeeds = updateWorkspaceFeedsForConversation(previous, merged);
       const inScope = conversationMatchesScope(merged, scope);
       const wasVisible = snapshot.conversations.some((item) => item.id === merged.id);
       const workdirActivity = bumpWorkdirActivity(
@@ -1190,21 +1429,25 @@ export function createSidebarStore(
         // 会话不属于当前作用域且原本不可见：保持 conversations 引用稳定。
         // 否则每次调用都会产生新列表引用，调用方若依据“列表里没有该会话”
         // 反复重插，会形成同步更新风暴（Maximum update depth exceeded）。
-        commit({ byId, workdirActivity });
+        commit({ byId, workspaceFeeds, workdirActivity });
         return;
       }
       const rest = snapshot.conversations.filter((item) => item.id !== merged.id);
       const next = inScope ? sortSidebarConversations([merged, ...rest]) : rest;
-      commitScopedList(next, { workdirActivity });
+      commitScopedList(next, { workspaceFeeds, workdirActivity });
     },
 
     removeLocal: (conversationId) => {
-      if (!byId.has(conversationId)) {
+      const previous = byId.get(conversationId);
+      if (!previous) {
         return;
       }
       byId = new Map(byId);
       byId.delete(conversationId);
-      commitScopedList(snapshot.conversations.filter((item) => item.id !== conversationId));
+      const workspaceFeeds = updateWorkspaceFeedsForConversation(previous, undefined);
+      commitScopedList(snapshot.conversations.filter((item) => item.id !== conversationId), {
+        workspaceFeeds,
+      });
     },
 
     applyRunningPatch: (patch) => {

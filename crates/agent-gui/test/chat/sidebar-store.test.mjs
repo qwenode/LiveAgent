@@ -37,6 +37,7 @@ function createFakeBackend() {
     protectedIds: [],
     listImpl: null,
     renameImpl: null,
+    pinImpl: null,
     deleteImpl: null,
   };
 
@@ -75,6 +76,9 @@ function createFakeBackend() {
     },
     setConversationPinned: async (id, isPinned) => {
       state.calls.pin.push({ id, isPinned });
+      if (state.pinImpl) {
+        return state.pinImpl(id, isPinned);
+      }
       return conversation(id, { isPinned, pinnedAt: isPinned ? 500 : null });
     },
     deleteConversation: async (id) => {
@@ -114,6 +118,44 @@ function createFakeBackend() {
 
 const SCOPE_A = { kind: "workdir", cwd: "/tmp/a" };
 const SCOPE_B = { kind: "workdir", cwd: "/tmp/b" };
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitFor(predicate, timeoutMs = 500) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error("timed out waiting for sidebar store state");
+    }
+    await sleep(5);
+  }
+}
+
+function workspaceTarget(cwd) {
+  return { pathKey: cwd, cwd };
+}
+
+function workspaceFeed(store, cwd) {
+  return store.getSnapshot().workspaceFeeds.get(cwd);
+}
+
+function workspaceFeedIds(store, cwd) {
+  return workspaceFeed(store, cwd)?.conversationIds ?? [];
+}
+
+function conversationRange(prefix, cwd, count) {
+  return Array.from({ length: count }, (_, index) =>
+    conversation(`${prefix}${index + 1}`, { cwd, updatedAt: count - index }),
+  );
+}
 
 test("initial load fills the list and fetches workdirs exactly once", async () => {
   const fake = createFakeBackend();
@@ -543,5 +585,423 @@ test("upsertLocal and removeLocal manage pending drafts", async () => {
   store.removeLocal("draft");
   assert.equal(store.getSnapshot().conversations.length, 0);
   assert.equal(store.peek("draft"), undefined);
+  store.stop();
+});
+
+test("workspace feeds isolate rows and grow 5 then 15 then 25 without dropping cached rows", async () => {
+  const fake = createFakeBackend();
+  const rowsA = conversationRange("a", "/tmp/a", 30);
+  const rowsB = conversationRange("b", "/tmp/b", 3);
+  fake.state.listImpl = (page, pageSize, scope) => {
+    const all = scope.cwd === "/tmp/a" ? rowsA : rowsB;
+    const start = (page - 1) * pageSize;
+    return { items: all.slice(start, start + pageSize), totalCount: all.length };
+  };
+  const store = createSidebarStore(fake.backend);
+  store.setScope({ kind: "none" });
+  store.start();
+  await tick();
+
+  await store.ensureWorkspaceFeeds([workspaceTarget("/tmp/a"), workspaceTarget("/tmp/b")]);
+  assert.deepEqual(
+    fake.state.calls.list.map(({ page, pageSize, scope }) => [page, pageSize, scope.cwd]),
+    [
+      [1, 5, "/tmp/a"],
+      [1, 5, "/tmp/b"],
+    ],
+  );
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/a"), rowsA.slice(0, 5).map((item) => item.id));
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/b"), rowsB.map((item) => item.id));
+  assert.equal(workspaceFeed(store, "/tmp/a").visibleLimit, 5);
+  assert.equal(workspaceFeed(store, "/tmp/a").totalCount, 30);
+  assert.equal(workspaceFeed(store, "/tmp/b").totalCount, 3);
+
+  await store.loadMoreWorkspaceFeed(workspaceTarget("/tmp/a"));
+  assert.equal(fake.state.calls.list.at(-1).pageSize, 15);
+  assert.equal(workspaceFeed(store, "/tmp/a").visibleLimit, 15);
+  assert.equal(workspaceFeedIds(store, "/tmp/a").length, 15);
+  assert.equal(workspaceFeedIds(store, "/tmp/b").length, 3);
+
+  await store.loadMoreWorkspaceFeed(workspaceTarget("/tmp/a"));
+  assert.equal(fake.state.calls.list.at(-1).pageSize, 25);
+  assert.equal(workspaceFeed(store, "/tmp/a").visibleLimit, 25);
+  assert.equal(workspaceFeedIds(store, "/tmp/a").length, 25);
+  const cachedIds = [...workspaceFeedIds(store, "/tmp/a")];
+
+  store.collapseWorkspaceFeed("/tmp/a");
+  assert.equal(workspaceFeed(store, "/tmp/a").visibleLimit, 5);
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/a"), cachedIds);
+  store.stop();
+});
+
+test("workspace feed requests dedupe by path and never exceed four concurrent reads", async () => {
+  const fake = createFakeBackend();
+  const pending = [];
+  let active = 0;
+  let maxActive = 0;
+  fake.state.listImpl = (_page, _pageSize, scope) => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    const gate = deferred();
+    pending.push({ cwd: scope.cwd, gate });
+    return gate.promise.finally(() => {
+      active -= 1;
+    });
+  };
+  const store = createSidebarStore(fake.backend);
+  store.setScope({ kind: "none" });
+  store.start();
+  await tick();
+
+  const targets = Array.from({ length: 6 }, (_, index) => workspaceTarget(`/tmp/feed-${index}`));
+  const ensureAll = store.ensureWorkspaceFeeds(targets);
+  const ensureDuplicate = store.ensureWorkspaceFeeds([targets[0]]);
+  await tick();
+  assert.equal(fake.state.calls.list.length, 4);
+  assert.equal(maxActive, 4);
+
+  for (const entry of pending.slice(0, 4)) {
+    entry.gate.resolve({ items: [], totalCount: 0 });
+  }
+  await tick();
+  await tick();
+  assert.equal(fake.state.calls.list.length, 6);
+  assert.equal(maxActive, 4);
+
+  for (const entry of pending.slice(4)) {
+    entry.gate.resolve({ items: [], totalCount: 0 });
+  }
+  await Promise.all([ensureAll, ensureDuplicate]);
+  assert.equal(new Set(fake.state.calls.list.map((call) => call.scope.cwd)).size, 6);
+  store.stop();
+});
+
+test("repeated workspace load-more clicks share one request and leave other feed state untouched", async () => {
+  const fake = createFakeBackend();
+  const rowsA = conversationRange("a", "/tmp/a", 20);
+  const rowsB = conversationRange("b", "/tmp/b", 2);
+  let loadMoreGate = null;
+  fake.state.listImpl = (_page, pageSize, scope) => {
+    if (scope.cwd === "/tmp/a" && pageSize === 15 && loadMoreGate) {
+      return loadMoreGate.promise;
+    }
+    const all = scope.cwd === "/tmp/a" ? rowsA : rowsB;
+    return { items: all.slice(0, pageSize), totalCount: all.length };
+  };
+  const store = createSidebarStore(fake.backend);
+  store.setScope({ kind: "none" });
+  store.start();
+  await tick();
+  await store.ensureWorkspaceFeeds([workspaceTarget("/tmp/a"), workspaceTarget("/tmp/b")]);
+  const feedBBefore = workspaceFeed(store, "/tmp/b");
+
+  loadMoreGate = deferred();
+  const first = store.loadMoreWorkspaceFeed(workspaceTarget("/tmp/a"));
+  const second = store.loadMoreWorkspaceFeed(workspaceTarget("/tmp/a"));
+  await tick();
+
+  assert.equal(
+    fake.state.calls.list.filter(
+      (call) => call.scope.cwd === "/tmp/a" && call.pageSize === 15,
+    ).length,
+    1,
+  );
+  assert.equal(workspaceFeed(store, "/tmp/a").visibleLimit, 15);
+  assert.equal(workspaceFeed(store, "/tmp/a").isLoadingMore, true);
+  assert.deepEqual(
+    {
+      ids: workspaceFeedIds(store, "/tmp/b"),
+      status: workspaceFeed(store, "/tmp/b").status,
+      isLoadingMore: workspaceFeed(store, "/tmp/b").isLoadingMore,
+      error: workspaceFeed(store, "/tmp/b").error,
+    },
+    {
+      ids: feedBBefore.conversationIds,
+      status: feedBBefore.status,
+      isLoadingMore: feedBBefore.isLoadingMore,
+      error: feedBBefore.error,
+    },
+  );
+
+  loadMoreGate.resolve({ items: rowsA.slice(0, 15), totalCount: rowsA.length });
+  await Promise.all([first, second]);
+  assert.equal(workspaceFeed(store, "/tmp/a").isLoadingMore, false);
+  assert.equal(workspaceFeedIds(store, "/tmp/a").length, 15);
+  store.stop();
+});
+
+test("workspace refresh targets invalidate removed requests and force a follow-up refresh", async () => {
+  const fake = createFakeBackend();
+  const first = deferred();
+  const restored = deferred();
+  let workspaceReads = 0;
+  fake.state.listImpl = (_page, _pageSize, scope) => {
+    if (scope.cwd !== "/tmp/a") return { items: [], totalCount: 0 };
+    workspaceReads += 1;
+    if (workspaceReads === 1) return first.promise;
+    if (workspaceReads === 2) return restored.promise;
+    return {
+      items: [conversation("fresh", { cwd: "/tmp/a", updatedAt: 30 })],
+      totalCount: 1,
+    };
+  };
+  const store = createSidebarStore(fake.backend);
+  const targetA = workspaceTarget("/tmp/a");
+  store.setScope({ kind: "none" });
+  store.start();
+  await tick();
+  store.setWorkspaceFeedRefreshTargets([targetA]);
+
+  const initial = store.ensureWorkspaceFeeds([targetA]);
+  await tick();
+  store.setWorkspaceFeedRefreshTargets([]);
+  first.resolve({
+    items: [conversation("archived-stale", { cwd: "/tmp/a", updatedAt: 10 })],
+    totalCount: 1,
+  });
+  await initial;
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/a"), []);
+
+  store.setWorkspaceFeedRefreshTargets([targetA]);
+  await tick();
+  const forced = store.ensureWorkspaceFeeds([targetA], { force: true });
+  restored.resolve({
+    items: [conversation("restore-stale", { cwd: "/tmp/a", updatedAt: 20 })],
+    totalCount: 1,
+  });
+  await forced;
+  assert.equal(workspaceReads, 3);
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/a"), ["fresh"]);
+  store.stop();
+});
+
+test("an active-scope refresh supersedes an older workspace feed response", async () => {
+  const fake = createFakeBackend();
+  const stale = deferred();
+  const fresh = deferred();
+  fake.state.listImpl = (_page, pageSize) => (pageSize === 5 ? stale.promise : fresh.promise);
+  const store = createSidebarStore(fake.backend);
+  store.setScope({ kind: "none" });
+  store.start();
+  await tick();
+
+  const ensurePromise = store.ensureWorkspaceFeeds([workspaceTarget("/tmp/a")]);
+  await tick();
+  store.setScope(SCOPE_A);
+  await tick();
+
+  fresh.resolve({
+    items: [conversation("fresh", { cwd: "/tmp/a", updatedAt: 20 })],
+    totalCount: 1,
+  });
+  await tick();
+  stale.resolve({
+    items: [conversation("stale", { cwd: "/tmp/a", updatedAt: 10 })],
+    totalCount: 1,
+  });
+  await ensurePromise;
+
+  assert.deepEqual(store.getSnapshot().conversations.map((item) => item.id), ["fresh"]);
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/a"), ["fresh"]);
+  store.stop();
+});
+
+test("workspace feed failures retain stale rows and retry clears list and load-more errors", async () => {
+  const fake = createFakeBackend();
+  const rows = conversationRange("a", "/tmp/a", 20);
+  const rowsB = conversationRange("b", "/tmp/b", 2);
+  let failure = null;
+  fake.state.listImpl = (_page, pageSize, scope) => {
+    if (scope.cwd === "/tmp/a" && failure) throw new Error(failure);
+    const all = scope.cwd === "/tmp/a" ? rows : rowsB;
+    return { items: all.slice(0, pageSize), totalCount: all.length };
+  };
+  const store = createSidebarStore(fake.backend);
+  store.setScope({ kind: "none" });
+  store.start();
+  await tick();
+
+  await store.ensureWorkspaceFeeds([workspaceTarget("/tmp/a"), workspaceTarget("/tmp/b")]);
+  const feedBBefore = workspaceFeed(store, "/tmp/b");
+  failure = "load more failed";
+  await store.loadMoreWorkspaceFeed(workspaceTarget("/tmp/a"));
+  assert.equal(workspaceFeed(store, "/tmp/a").visibleLimit, 15);
+  assert.equal(workspaceFeed(store, "/tmp/a").error, "loadMoreFailed");
+  assert.equal(workspaceFeed(store, "/tmp/a").totalCount, 20);
+  assert.equal(workspaceFeedIds(store, "/tmp/a").length, 5);
+  assert.deepEqual(workspaceFeed(store, "/tmp/b"), feedBBefore);
+
+  failure = null;
+  await store.retryWorkspaceFeed(workspaceTarget("/tmp/a"));
+  assert.equal(workspaceFeed(store, "/tmp/a").error, null);
+  assert.equal(workspaceFeedIds(store, "/tmp/a").length, 15);
+
+  failure = "refresh failed";
+  await store.ensureWorkspaceFeeds([workspaceTarget("/tmp/a")], { force: true });
+  assert.equal(workspaceFeed(store, "/tmp/a").error, "listFailed");
+  assert.equal(workspaceFeed(store, "/tmp/a").totalCount, 20);
+  assert.equal(workspaceFeedIds(store, "/tmp/a").length, 15);
+  assert.deepEqual(workspaceFeed(store, "/tmp/b"), feedBBefore);
+
+  failure = null;
+  await store.retryWorkspaceFeed(workspaceTarget("/tmp/a"));
+  assert.equal(workspaceFeed(store, "/tmp/a").error, null);
+  assert.equal(workspaceFeedIds(store, "/tmp/a").length, 15);
+  store.stop();
+});
+
+test("active scope seeds its workspace feed and scope switches keep both feed caches coherent", async () => {
+  const fake = createFakeBackend();
+  const rowsA = conversationRange("a", "/tmp/a", 8);
+  const rowsB = conversationRange("b", "/tmp/b", 4);
+  fake.state.listImpl = (_page, pageSize, scope) => {
+    const all = scope.cwd === "/tmp/a" ? rowsA : rowsB;
+    return { items: all.slice(0, pageSize), totalCount: all.length };
+  };
+  const store = createSidebarStore(fake.backend);
+  store.setScope(SCOPE_A);
+  store.start();
+  await tick();
+  assert.equal(fake.state.calls.list.length, 1);
+
+  await store.ensureWorkspaceFeeds([workspaceTarget("/tmp/a")]);
+  assert.equal(fake.state.calls.list.length, 1);
+  assert.equal(workspaceFeed(store, "/tmp/a").visibleLimit, 5);
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/a"), rowsA.map((item) => item.id));
+
+  store.setScope(SCOPE_B);
+  await tick();
+  assert.equal(fake.state.calls.list.length, 2);
+  await store.ensureWorkspaceFeeds([workspaceTarget("/tmp/b")]);
+  assert.equal(fake.state.calls.list.length, 2);
+  assert.deepEqual(store.getSnapshot().conversations.map((item) => item.id), rowsB.map((item) => item.id));
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/a"), rowsA.map((item) => item.id));
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/b"), rowsB.map((item) => item.id));
+  store.stop();
+});
+
+test("events and mutations update only the owning workspace feed", async () => {
+  const fake = createFakeBackend();
+  const rowsA = conversationRange("a", "/tmp/a", 2);
+  const rowsB = conversationRange("b", "/tmp/b", 2);
+  fake.state.listImpl = (_page, pageSize, scope) => {
+    const all = scope.cwd === "/tmp/a" ? rowsA : rowsB;
+    return { items: all.slice(0, pageSize), totalCount: all.length };
+  };
+  fake.state.renameImpl = (id, title) =>
+    conversation(id, { cwd: "/tmp/a", title, updatedAt: 100 });
+  fake.state.pinImpl = (id, isPinned) =>
+    conversation(id, { cwd: "/tmp/b", isPinned, pinnedAt: 200, updatedAt: 100 });
+  const store = createSidebarStore(fake.backend, { workdirsDebounceMs: 1_000 });
+  store.setScope({ kind: "none" });
+  store.start();
+  await tick();
+  await store.ensureWorkspaceFeeds([workspaceTarget("/tmp/a"), workspaceTarget("/tmp/b")]);
+
+  fake.emit({
+    kind: "upsert",
+    conversationId: "a3",
+    conversation: conversation("a3", { cwd: "/tmp/a", updatedAt: 50 }),
+  });
+  fake.emit({ kind: "delete", conversationId: "b1" });
+  await store.rename("a1", "renamed");
+  await store.setPinned("b2", true);
+
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/a"), ["a3", "a1", "a2"]);
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/b"), ["b2"]);
+  assert.equal(store.peek("a1").title, "renamed");
+  assert.equal(store.peek("b2").isPinned, true);
+
+  const beforeRunningA = [...workspaceFeedIds(store, "/tmp/a")];
+  const beforeRunningB = [...workspaceFeedIds(store, "/tmp/b")];
+  store.applyRunningPatch({ conversationId: "a1", running: true, workdir: "/tmp/a", updatedAt: 300 });
+  assert.equal(store.getSnapshot().runningConversationIds.has("a1"), true);
+  assert.equal(store.getSnapshot().runningWorkdirPathKeys.has("/tmp/a"), true);
+  assert.equal(store.getSnapshot().runningWorkdirPathKeys.has("/tmp/b"), false);
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/a"), beforeRunningA);
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/b"), beforeRunningB);
+  store.applyRunningPatch({ conversationId: "a1", running: false, updatedAt: 301 });
+  assert.equal(store.getSnapshot().runningConversationIds.has("a1"), false);
+  store.stop();
+});
+
+test("reconnect refreshes active and cached workspace feeds while retaining failed stale rows", async () => {
+  const fake = createFakeBackend();
+  let phase = "initial";
+  fake.state.listImpl = (_page, pageSize, scope) => {
+    if (phase === "reconnect" && scope.cwd === "/tmp/b") {
+      throw new Error("workspace b unavailable");
+    }
+    const all =
+      phase === "initial"
+        ? [conversation(`old-${scope.cwd.endsWith("a") ? "a" : "b"}`, { cwd: scope.cwd })]
+        : [conversation("new-a", { cwd: "/tmp/a", updatedAt: 50 })];
+    return { items: all.slice(0, pageSize), totalCount: all.length };
+  };
+  const store = createSidebarStore(fake.backend);
+  store.setScope(SCOPE_A);
+  store.start();
+  await tick();
+  store.setWorkspaceFeedRefreshTargets([workspaceTarget("/tmp/a"), workspaceTarget("/tmp/b")]);
+  await store.ensureWorkspaceFeeds([workspaceTarget("/tmp/a"), workspaceTarget("/tmp/b")]);
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/b"), ["old-b"]);
+
+  phase = "reconnect";
+  fake.setConnected(false);
+  fake.setConnected(true);
+  await waitFor(
+    () =>
+      store.getSnapshot().conversations[0]?.id === "new-a" &&
+      workspaceFeed(store, "/tmp/b")?.error === "listFailed",
+  );
+
+  assert.deepEqual(store.getSnapshot().conversations.map((item) => item.id), ["new-a"]);
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/a"), ["new-a"]);
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/b"), ["old-b"]);
+  assert.equal(workspaceFeed(store, "/tmp/b").error, "listFailed");
+  store.stop();
+});
+
+test("archived workspace feeds skip reconnect reads and refresh after restore", async () => {
+  const fake = createFakeBackend();
+  let phase = "initial";
+  fake.state.listImpl = (_page, pageSize, scope) => {
+    const suffix = scope.cwd?.endsWith("b") ? "b" : "a";
+    const item = conversation(`${phase === "initial" ? "old" : "new"}-${suffix}`, {
+      cwd: scope.cwd,
+      updatedAt: phase === "initial" ? 10 : 20,
+    });
+    return { items: [item].slice(0, pageSize), totalCount: 1 };
+  };
+  const store = createSidebarStore(fake.backend);
+  const targetA = workspaceTarget("/tmp/a");
+  const targetB = workspaceTarget("/tmp/b");
+  store.setScope(SCOPE_A);
+  store.start();
+  await tick();
+  store.setWorkspaceFeedRefreshTargets([targetA, targetB]);
+  await store.ensureWorkspaceFeeds([targetA, targetB]);
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/b"), ["old-b"]);
+
+  store.setWorkspaceFeedRefreshTargets([targetA]);
+  const workspaceBReadsBeforeReconnect = fake.state.calls.list.filter(
+    (call) => call.scope.cwd === "/tmp/b",
+  ).length;
+  phase = "restored";
+  fake.setConnected(false);
+  fake.setConnected(true);
+  await waitFor(() => store.getSnapshot().conversations[0]?.id === "new-a");
+  assert.equal(
+    fake.state.calls.list.filter((call) => call.scope.cwd === "/tmp/b").length,
+    workspaceBReadsBeforeReconnect,
+  );
+  assert.deepEqual(workspaceFeedIds(store, "/tmp/b"), ["old-b"]);
+
+  store.setWorkspaceFeedRefreshTargets([targetA, targetB]);
+  await waitFor(() => workspaceFeedIds(store, "/tmp/b")[0] === "new-b");
+  assert.equal(
+    fake.state.calls.list.filter((call) => call.scope.cwd === "/tmp/b").length,
+    workspaceBReadsBeforeReconnect + 1,
+  );
   store.stop();
 });
