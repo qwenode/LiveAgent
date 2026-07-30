@@ -376,6 +376,16 @@ export default function GatewayApp() {
     [transcriptFollow],
   );
   const composerRef = useRef<MentionComposerHandle | null>(null);
+  const focusComposerAfterConversationChange = useCallback(() => {
+    if (isMobileSidebarLayout()) {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        composerRef.current?.focus();
+      });
+    });
+  }, []);
   const composerDraftCacheRef = useRef<Map<string, MentionComposerDraft>>(new Map());
   const composerDraftOwnerRef = useRef("");
   const conversationIdRef = useRef(conversationId);
@@ -1250,9 +1260,10 @@ export default function GatewayApp() {
           workdir: targetProject.path,
           preserveCurrentComposerDraft: true,
         });
+        focusComposerAfterConversationChange();
       }
     },
-    [setSettings, workspaceProjects],
+    [focusComposerAfterConversationChange, setSettings, workspaceProjects],
   );
 
   const handleSelectWorkspaceProject = useCallback(
@@ -3070,12 +3081,14 @@ export default function GatewayApp() {
       activeView !== "chat" &&
       (visibleConversationId === "" || isLocalDraftConversationId(visibleConversationId))
     ) {
+      focusComposerAfterConversationChange();
       return;
     }
     startNewConversation({
       workdir: isAgentMode ? activeWorkspaceProjectPath || undefined : undefined,
       preserveCurrentComposerDraft: true,
     });
+    focusComposerAfterConversationChange();
   }
 
   function handleSidebarSelectConversation(id: string) {

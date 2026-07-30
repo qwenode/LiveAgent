@@ -46,6 +46,7 @@ type UseWorkspaceProjectsParams = {
   setRightDockOpen: Dispatch<SetStateAction<boolean>>;
   startNewConversationActionRef: MutableRefObject<(options?: { workdir?: string }) => void>;
   prepareComposerForConversationChangeActionRef: MutableRefObject<() => void>;
+  focusComposerAfterConversationChangeActionRef: MutableRefObject<() => void>;
 };
 
 /**
@@ -70,6 +71,7 @@ export function useWorkspaceProjects(params: UseWorkspaceProjectsParams) {
     setRightDockOpen,
     startNewConversationActionRef,
     prepareComposerForConversationChangeActionRef,
+    focusComposerAfterConversationChangeActionRef,
   } = params;
 
   const sidebarWorkdirs = useSidebarSelector(sidebarStore, (s) => s.workdirs);
@@ -262,6 +264,7 @@ export function useWorkspaceProjects(params: UseWorkspaceProjectsParams) {
       if (options?.startConversation) {
         prepareComposerForConversationChangeActionRef.current();
         startNewConversationActionRef.current({ workdir: targetProject.path });
+        focusComposerAfterConversationChangeActionRef.current();
       }
     },
     [setSettings, workspaceProjects, activeWorkspaceProjectId, settings.system],
