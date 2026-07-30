@@ -166,6 +166,107 @@ export function buildToolsSuffix(
   if (hasDynamicMcp) toolGroups.push("MCP business tools whose names are prefixed with mcp_");
 
   const sections: string[] = [];
+  const examples: string[] = [
+    ["<example>", "user: 2 + 2", "assistant: 4", "</example>"].join("\n"),
+    [
+      "<example>",
+      "user: what command should I run to list files in the current directory?",
+      "assistant: ls",
+      "</example>",
+    ].join("\n"),
+  ];
+
+  if (has("List")) {
+    examples.push(
+      [
+        "<example>",
+        "user: what files are in src/?",
+        "assistant: [uses List on src/]",
+        "assistant: src/App.tsx",
+        "src/main.tsx",
+        "src/lib/",
+        "</example>",
+      ].join("\n"),
+    );
+  }
+  if (has("Grep") && has("Read")) {
+    examples.push(
+      [
+        "<example>",
+        "user: which file implements buildToolsSuffix?",
+        "assistant: [uses Grep to locate buildToolsSuffix, then Read to verify it]",
+        "assistant: crates/agent-gui/src/lib/chat/runner/agentRunner.ts",
+        "</example>",
+      ].join("\n"),
+    );
+  }
+  if (has("TodoWrite") && has("Grep") && has("Read") && has("Edit") && has("Bash")) {
+    examples.push(
+      [
+        "<example>",
+        "user: fix the login bug",
+        "assistant: [uses TodoWrite, locates the implementation with Grep and Read, applies the fix with Edit, then runs the relevant tests with Bash]",
+        "assistant: Fixed the login state race and verified the related tests pass.",
+        "</example>",
+      ].join("\n"),
+    );
+  }
+  if (has("ManagedProcess")) {
+    examples.push(
+      [
+        "<example>",
+        "user: start the development server",
+        "assistant: I’ll start it with ManagedProcess so it can keep running while we continue working.",
+        "assistant: [uses ManagedProcess action=start]",
+        "assistant: Development server started.",
+        "</example>",
+      ].join("\n"),
+    );
+  }
+  if (has("Bash")) {
+    examples.push(
+      [
+        "<example>",
+        "user: run the database migration",
+        "assistant: This changes the database schema, so I’ll run the documented migration command and report whether it succeeds.",
+        "assistant: [uses Bash to run the migration]",
+        "assistant: Migration completed successfully.",
+        "</example>",
+      ].join("\n"),
+    );
+  }
+  if (has("Agent")) {
+    examples.push(
+      [
+        "<example>",
+        "user: review the frontend and backend independently",
+        "assistant: [uses one Agent call containing two readonly agents so both reviews run in parallel]",
+        "assistant: Frontend and backend reviews completed; the main findings are listed below.",
+        "</example>",
+      ].join("\n"),
+    );
+  }
+  if (has("Image")) {
+    examples.push(
+      [
+        "<example>",
+        "user: show me the generated screenshot",
+        "assistant: [uses Image with the returned screenshot path]",
+        "</example>",
+      ].join("\n"),
+    );
+  }
+  if (has("MemoryManager")) {
+    examples.push(
+      [
+        "<example>",
+        "user: remember that this project always uses pnpm",
+        "assistant: [searches existing memory, then uses MemoryManager to write or update project memory]",
+        "assistant: Remembered for this project.",
+        "</example>",
+      ].join("\n"),
+    );
+  }
 
   sections.push(
     [
@@ -173,11 +274,21 @@ export function buildToolsSuffix(
       "",
       "In this mode you have access to the tools listed under **Available Tools** at the end of this section. Invoke them when the task requires reading, searching, modifying, or coordinating state (files, commands, agents, MCP services). For pure Q&A, explanation, or analysis that does not depend on current state, answer directly without invoking tools.",
       "",
+      "## Tone and Style",
+      "- Be concise, direct, and focused on the user's specific request.",
+      "- Avoid unnecessary preambles, postambles, repeated summaries, and tangential information.",
+      "- Prefer 1–3 sentences when they fully answer the request, but provide enough detail for complex implementation, debugging, review, or safety-critical tasks.",
+      "- Use GitHub-flavored Markdown where it improves readability.",
+      "- Communicate with the user through normal assistant responses, not through shell commands, generated files, or code comments.",
+      "- When running a non-trivial Bash command—especially one that changes system or workspace state—briefly explain what it does and why it is necessary.",
+      "- If a request cannot be completed, respond briefly and offer a practical alternative when possible.",
+      "",
       "## Final Reply",
       "- Your reply to the user is plain text plus Markdown.",
       "- Never include raw tool-call JSON or raw tool arguments in your reply — describe what you did in plain words instead.",
     ].join("\n"),
   );
+  sections.push(["## Agent Mode Examples", ...examples].join("\n\n"));
 
   if (hasFileTool || hasAny("Bash", "ManagedProcess", "SSHManager", "McpManager", "Agent")) {
     sections.push(

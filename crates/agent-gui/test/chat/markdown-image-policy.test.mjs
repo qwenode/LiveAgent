@@ -454,6 +454,43 @@ test("agent tool rules require Image for chat-visible images", () => {
   );
 });
 
+test("agent tool rules include concise tone guidance and mode-aware examples", () => {
+  const suffix = agentRunnerModule.buildToolsSuffix("/workspace", [
+    "Read",
+    "List",
+    "Grep",
+    "Edit",
+    "Bash",
+    "ManagedProcess",
+    "TodoWrite",
+    "Agent",
+    "Image",
+    "MemoryManager",
+  ]);
+
+  assert.match(suffix, /## Tone and Style/);
+  assert.match(suffix, /Be concise, direct, and focused on the user's specific request/);
+  assert.match(suffix, /Avoid unnecessary preambles, postambles, repeated summaries/);
+  assert.match(suffix, /Prefer 1–3 sentences when they fully answer the request/);
+  assert.match(suffix, /briefly explain what it does and why it is necessary/);
+  assert.match(suffix, /## Agent Mode Examples/);
+  assert.match(suffix, /assistant: \[uses List on src\/\]/);
+  assert.match(suffix, /uses Grep to locate buildToolsSuffix, then Read to verify it/);
+  assert.match(suffix, /uses TodoWrite,[\s\S]*applies the fix with Edit/);
+  assert.match(suffix, /uses ManagedProcess action=start/);
+  assert.match(suffix, /uses Bash to run the migration/);
+  assert.match(suffix, /one Agent call containing two readonly agents/);
+  assert.match(suffix, /uses Image with the returned screenshot path/);
+  assert.match(suffix, /uses MemoryManager to write or update project memory/);
+
+  const textOnlySuffix = agentRunnerModule.buildToolsSuffix("/workspace", []);
+  assert.match(textOnlySuffix, /user: 2 \+ 2\nassistant: 4/);
+  assert.match(textOnlySuffix, /assistant: ls/);
+  assert.doesNotMatch(textOnlySuffix, /uses List on src/);
+  assert.doesNotMatch(textOnlySuffix, /uses Bash to run the migration/);
+  assert.doesNotMatch(textOnlySuffix, /one Agent call containing two readonly agents/);
+});
+
 test("agent tool rules prefer one parallel Agent batch over sequential calls", () => {
   const suffix = agentRunnerModule.buildToolsSuffix("/workspace", [
     "Agent",
