@@ -216,6 +216,65 @@ test("web settings normalize independent font families and migrate the retired i
   );
 });
 
+test("web chat sidebar collapse paths normalize, persist, and stay local during sync", () => {
+  assert.deepEqual(settings.normalizeCustomSettings({}, []).chatSidebar, {
+    projectsCollapsed: false,
+    recentCollapsed: false,
+    collapsedWorkspaceProjectPaths: [],
+  });
+
+  const normalized = settings.normalizeCustomSettings(
+    {
+      chatSidebar: {
+        projectsCollapsed: true,
+        recentCollapsed: true,
+        collapsedWorkspaceProjectPaths: [
+          " /workspace/alpha/ ",
+          "/workspace/alpha",
+          "",
+          null,
+          42,
+          "C:\\Work\\Project\\",
+          "c:/work/project",
+        ],
+      },
+    },
+    [],
+  ).chatSidebar;
+  assert.deepEqual(normalized, {
+    projectsCollapsed: true,
+    recentCollapsed: true,
+    collapsedWorkspaceProjectPaths: ["/workspace/alpha", "c:/work/project"],
+  });
+
+  installWindow();
+  const current = webSettings.getWebDefaultSettings("token");
+  current.customSettings.chatSidebar = normalized;
+  webSettings.persistWebSettings(current);
+  assert.deepEqual(webSettings.loadWebSettings("token").customSettings.chatSidebar, normalized);
+
+  const incoming = settingsSync.buildGatewaySettingsSyncPayload(
+    settings.normalizeSettings({
+      customSettings: {
+        chatSidebar: {
+          projectsCollapsed: false,
+          recentCollapsed: false,
+          collapsedWorkspaceProjectPaths: ["/remote/project"],
+        },
+      },
+    }),
+  );
+  assert.deepEqual(incoming.customSettings.chatSidebar, {
+    projectsCollapsed: false,
+    recentCollapsed: false,
+    collapsedWorkspaceProjectPaths: [],
+  });
+  assert.deepEqual(
+    settingsSync.applyGatewaySettingsSyncPayload(current, incoming).customSettings.chatSidebar,
+    normalized,
+  );
+});
+
 test("web settings normalization canonicalizes project keyed maps with Windows path compatibility", () => {
   const normalized = settings.normalizeSettings({
     ssh: {

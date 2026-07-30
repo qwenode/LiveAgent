@@ -18,6 +18,7 @@ import {
   normalizeSkillsSettings,
   normalizeTheme,
   normalizeUpdateSettings,
+  normalizeWorkspaceProjectPathKeys,
   resolveWorkspaceProjects,
   type SelectedModel,
   type SkillsSettings,
@@ -88,6 +89,9 @@ function readLocalUiSettings(): {
       chatSidebar: {
         projectsCollapsed: chatSidebar.projectsCollapsed === true,
         recentCollapsed: chatSidebar.recentCollapsed === true,
+        collapsedWorkspaceProjectPaths: normalizeWorkspaceProjectPathKeys(
+          chatSidebar.collapsedWorkspaceProjectPaths,
+        ),
       },
       chatTranscript: normalizeChatTranscriptSettings(obj.chatTranscript),
       rightDock: normalizeRightDockSettings(obj.rightDock),

@@ -88,6 +88,7 @@ export type MemorySettings = {
 export type ChatSidebarSettings = {
   projectsCollapsed: boolean;
   recentCollapsed: boolean;
+  collapsedWorkspaceProjectPaths: string[];
 };
 
 export const RIGHT_DOCK_TOOL_KINDS = ["fileTree", "gitReview", "tunnel", "sshTunnel"] as const;
@@ -602,6 +603,19 @@ export function workspaceProjectPathKey(path: unknown): string {
   return isWindowsProjectPathLike(normalizedPath)
     ? normalizeWindowsProjectPathKey(normalizedPath)
     : normalizePosixProjectPathKey(normalizedPath);
+}
+
+export function normalizeWorkspaceProjectPathKeys(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const value of input) {
+    const pathKey = workspaceProjectPathKey(value);
+    if (!pathKey || seen.has(pathKey)) continue;
+    seen.add(pathKey);
+    normalized.push(pathKey);
+  }
+  return normalized;
 }
 
 function assignNormalizedProjectKeyValue<T>(
@@ -2210,6 +2224,9 @@ export function normalizeCustomSettings(
     chatSidebar: {
       projectsCollapsed: chatSidebar.projectsCollapsed === true,
       recentCollapsed: chatSidebar.recentCollapsed === true,
+      collapsedWorkspaceProjectPaths: normalizeWorkspaceProjectPathKeys(
+        chatSidebar.collapsedWorkspaceProjectPaths,
+      ),
     },
     chatTranscript: normalizeChatTranscriptSettings(obj.chatTranscript),
     rightDock: normalizeRightDockSettings(obj.rightDock),

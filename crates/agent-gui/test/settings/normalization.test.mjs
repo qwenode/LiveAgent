@@ -798,6 +798,7 @@ test("gateway settings sync payload redacts provider api keys", () => {
   assert.deepEqual(payload.customSettings.chatSidebar, {
     projectsCollapsed: false,
     recentCollapsed: false,
+    collapsedWorkspaceProjectPaths: [],
   });
   assert.deepEqual(payload.customSettings.rightDock, {
     width: 612,
@@ -2177,6 +2178,44 @@ test("font scale settings normalize invalid values to 1 and clamp out-of-range v
 
   const custom = settings.normalizeCustomSettings({ fontScale: { chat: 1.2 } }, []);
   assert.deepEqual(custom.fontScale, { sidebar: 1, chat: 1.2, rightDock: 1 });
+});
+
+test("chat sidebar workspace collapse paths default, normalize, dedupe, and round-trip", () => {
+  const defaults = settings.normalizeCustomSettings({}, []).chatSidebar;
+  assert.deepEqual(defaults, {
+    projectsCollapsed: false,
+    recentCollapsed: false,
+    collapsedWorkspaceProjectPaths: [],
+  });
+
+  const normalized = settings.normalizeCustomSettings(
+    {
+      chatSidebar: {
+        projectsCollapsed: true,
+        recentCollapsed: true,
+        collapsedWorkspaceProjectPaths: [
+          " /workspace/alpha/ ",
+          "/workspace/alpha",
+          "",
+          null,
+          42,
+          "C:\\Work\\Project\\",
+          "c:/work/project",
+        ],
+      },
+    },
+    [],
+  ).chatSidebar;
+  assert.deepEqual(normalized, {
+    projectsCollapsed: true,
+    recentCollapsed: true,
+    collapsedWorkspaceProjectPaths: ["/workspace/alpha", "c:/work/project"],
+  });
+
+  assert.deepEqual(
+    settings.normalizeCustomSettings({ chatSidebar: normalized }, []).chatSidebar,
+    normalized,
+  );
 });
 
 test("chat transcript width defaults, clamps, and updates locally", () => {
