@@ -30,6 +30,9 @@ import type {
   SidebarMutationKind,
   SidebarRunningItem,
   SidebarScope,
+  SidebarWorkspaceFeed,
+  SidebarWorkspaceFeedErrorCode,
+  SidebarWorkspaceFeedTarget,
   SidebarWorkdirSummary,
 } from "./types";
 
@@ -38,12 +41,16 @@ const DEFAULT_RECONCILE_INTERVAL_MS = 60_000;
 const DEFAULT_WORKDIRS_FALLBACK_MS = 300_000;
 const DEFAULT_WORKDIRS_DEBOUNCE_MS = 2_000;
 const DEFAULT_POSITION_LOCK_MS = 1_200;
+const WORKSPACE_FEED_INITIAL_LIMIT = 5;
+const WORKSPACE_FEED_LOAD_MORE_INCREMENT = 10;
+const WORKSPACE_FEED_MAX_CONCURRENCY = 4;
 
 export type SidebarSnapshot = {
   revision: number;
   scopeKey: string;
   conversations: readonly SidebarConversation[];
   byId: ReadonlyMap<string, SidebarConversation>;
+  workspaceFeeds: ReadonlyMap<string, SidebarWorkspaceFeed>;
   totalCount: number;
   hasMore: boolean;
   listStatus: SidebarListStatus;
@@ -74,6 +81,13 @@ export type SidebarStore = {
   setScope(scope: SidebarScope): void;
   refresh(options?: { reason?: SidebarRefreshReason }): Promise<void>;
   loadMore(): Promise<void>;
+  ensureWorkspaceFeeds(
+    targets: readonly SidebarWorkspaceFeedTarget[],
+    options?: { force?: boolean },
+  ): Promise<void>;
+  retryWorkspaceFeed(target: SidebarWorkspaceFeedTarget): Promise<void>;
+  loadMoreWorkspaceFeed(target: SidebarWorkspaceFeedTarget): Promise<void>;
+  collapseWorkspaceFeed(pathKey: string): void;
   refreshWorkdirs(reason: SidebarWorkdirsRefreshReason): Promise<void>;
   rename(id: string, title: string): Promise<boolean>;
   setPinned(id: string, isPinned: boolean): Promise<boolean>;
@@ -109,6 +123,15 @@ function persistedCount(conversations: readonly SidebarConversation[]) {
   return count;
 }
 
+type WorkspaceFeedRequest = {
+  pathKey: string;
+  cwd: string;
+  target: number;
+  kind: SidebarWorkspaceFeedErrorCode;
+  generation: number;
+  seq: number;
+};
+
 export function createSidebarStore(
   backend: SidebarBackend,
   options?: SidebarStoreOptions,
@@ -130,6 +153,7 @@ export function createSidebarStore(
     scopeKey: sidebarScopeKey(scope),
     conversations: [],
     byId,
+    workspaceFeeds: new Map(),
     totalCount: 0,
     hasMore: false,
     listStatus: "initial",
@@ -157,6 +181,10 @@ export function createSidebarStore(
   let listRequestInFlight = false;
   let queuedListRequest: { authoritative: boolean } | null = null;
   let loadMoreRequestToken: symbol | null = null;
+  let workspaceFeedQueue: WorkspaceFeedRequest[] = [];
+  let activeWorkspaceFeedRequests = 0;
+  const activeWorkspaceFeedPathKeys = new Set<string>();
+  const workspaceFeedWaiters = new Map<string, Set<() => void>>();
   let workdirsInFlight = false;
   let workdirsQueued = false;
   let wasDisconnected = false;
@@ -221,6 +249,320 @@ export function createSidebarStore(
     return next;
   };
 
+  const normalizeWorkspaceFeedTarget = (
+    target: SidebarWorkspaceFeedTarget,
+  ): SidebarWorkspaceFeedTarget | null => {
+    const cwd = target.cwd.trim();
+    const pathKey = workspaceProjectPathKey(target.pathKey || cwd);
+    const cwdPathKey = workspaceProjectPathKey(cwd);
+    if (!cwd || !pathKey || pathKey !== cwdPathKey) {
+      return null;
+    }
+    return { pathKey, cwd };
+  };
+
+  const createWorkspaceFeed = (target: SidebarWorkspaceFeedTarget): SidebarWorkspaceFeed => ({
+    pathKey: target.pathKey,
+    cwd: target.cwd,
+    conversationIds: [],
+    visibleLimit: WORKSPACE_FEED_INITIAL_LIMIT,
+    totalCount: 0,
+    status: "initial",
+    isLoadingMore: false,
+    error: null,
+    errorDetail: null,
+    requestGeneration: 0,
+  });
+
+  const workspaceFeedRows = (
+    feed: SidebarWorkspaceFeed,
+    index: ReadonlyMap<string, SidebarConversation> = byId,
+  ) =>
+    feed.conversationIds
+      .map((id) => index.get(id))
+      .filter((item): item is SidebarConversation => item !== undefined);
+
+  const updateWorkspaceFeedsForConversation = (
+    previous: SidebarConversation | undefined,
+    next: SidebarConversation | undefined,
+  ): ReadonlyMap<string, SidebarWorkspaceFeed> => {
+    const conversationId = next?.id ?? previous?.id;
+    if (!conversationId || snapshot.workspaceFeeds.size === 0) {
+      return snapshot.workspaceFeeds;
+    }
+    const previousPathKey = workspaceProjectPathKey(previous?.cwd ?? "");
+    const nextPathKey = workspaceProjectPathKey(next?.cwd ?? "");
+    let workspaceFeeds: Map<string, SidebarWorkspaceFeed> | null = null;
+    for (const [pathKey, feed] of snapshot.workspaceFeeds) {
+      const wasListed = feed.conversationIds.includes(conversationId);
+      if (!wasListed && previousPathKey !== pathKey && nextPathKey !== pathKey) {
+        continue;
+      }
+      const previousCounted =
+        (previousPathKey === pathKey && previous?.isPending !== true) ||
+        (previous === undefined && wasListed);
+      const nextCounted = nextPathKey === pathKey && next?.isPending !== true;
+      const rest = workspaceFeedRows(feed).filter((item) => item.id !== conversationId);
+      const rows = nextPathKey === pathKey && next ? sortSidebarConversations([next, ...rest]) : rest;
+      const totalCount = Math.max(
+        persistedCount(rows),
+        feed.totalCount + Number(nextCounted) - Number(previousCounted),
+      );
+      workspaceFeeds ??= new Map(snapshot.workspaceFeeds);
+      workspaceFeeds.set(pathKey, {
+        ...feed,
+        conversationIds: rows.map((item) => item.id),
+        totalCount,
+        status: feed.status === "initial" ? "ready" : feed.status,
+        error: null,
+        errorDetail: null,
+      });
+    }
+    return workspaceFeeds ?? snapshot.workspaceFeeds;
+  };
+
+  const syncActiveWorkspaceFeed = (
+    workspaceFeeds: ReadonlyMap<string, SidebarWorkspaceFeed>,
+    state: {
+      conversations: readonly SidebarConversation[];
+      totalCount: number;
+      listStatus: SidebarListStatus;
+      isLoadingMore: boolean;
+      listError: SidebarErrorCode | null;
+      listErrorDetail: string | null;
+    },
+  ): ReadonlyMap<string, SidebarWorkspaceFeed> => {
+    if (scope.kind !== "workdir") {
+      return workspaceFeeds;
+    }
+    const pathKey = workspaceProjectPathKey(scope.cwd);
+    const feed = workspaceFeeds.get(pathKey);
+    if (!feed) {
+      return workspaceFeeds;
+    }
+    const next = new Map(workspaceFeeds);
+    next.set(pathKey, {
+      ...feed,
+      cwd: scope.cwd,
+      conversationIds: state.conversations.map((item) => item.id),
+      totalCount: state.totalCount,
+      status: state.listStatus,
+      isLoadingMore: state.isLoadingMore,
+      error:
+        state.listError === "listFailed" || state.listError === "loadMoreFailed"
+          ? state.listError
+          : null,
+      errorDetail: state.listErrorDetail,
+    });
+    return next;
+  };
+
+  const commitScopedState = (patch: Partial<SidebarSnapshot>) => {
+    const conversations = patch.conversations ?? snapshot.conversations;
+    const totalCount = patch.totalCount ?? snapshot.totalCount;
+    const listStatus = patch.listStatus ?? snapshot.listStatus;
+    const isLoadingMore = patch.isLoadingMore ?? snapshot.isLoadingMore;
+    const listError = patch.listError === undefined ? snapshot.listError : patch.listError;
+    const listErrorDetail =
+      patch.listErrorDetail === undefined ? snapshot.listErrorDetail : patch.listErrorDetail;
+    const workspaceFeeds = syncActiveWorkspaceFeed(
+      patch.workspaceFeeds ?? snapshot.workspaceFeeds,
+      {
+        conversations,
+        totalCount,
+        listStatus,
+        isLoadingMore,
+        listError,
+        listErrorDetail,
+      },
+    );
+    commit({ ...patch, workspaceFeeds });
+  };
+
+  const pruneOrphanedConversations = (
+    candidateIds: Iterable<string>,
+    workspaceFeeds: ReadonlyMap<string, SidebarWorkspaceFeed>,
+    conversations: readonly SidebarConversation[] = snapshot.conversations,
+  ) => {
+    const retained = retainedConversationIds();
+    const referenced = new Set(conversations.map((item) => item.id));
+    for (const feed of workspaceFeeds.values()) {
+      for (const id of feed.conversationIds) referenced.add(id);
+    }
+    let nextById: Map<string, SidebarConversation> | null = null;
+    for (const id of candidateIds) {
+      const item = byId.get(id);
+      if (!item || item.isPending === true || retained.has(id) || referenced.has(id)) {
+        continue;
+      }
+      nextById ??= new Map(byId);
+      nextById.delete(id);
+    }
+    if (nextById) byId = nextById;
+  };
+
+  const hasQueuedWorkspaceFeedRequest = (pathKey: string) =>
+    workspaceFeedQueue.some((request) => request.pathKey === pathKey);
+
+  const settleWorkspaceFeedWaiters = (pathKey: string) => {
+    if (activeWorkspaceFeedPathKeys.has(pathKey) || hasQueuedWorkspaceFeedRequest(pathKey)) {
+      return;
+    }
+    const waiters = workspaceFeedWaiters.get(pathKey);
+    workspaceFeedWaiters.delete(pathKey);
+    for (const resolve of waiters ?? []) resolve();
+  };
+
+  const waitForWorkspaceFeedIdle = (pathKey: string) => {
+    if (!activeWorkspaceFeedPathKeys.has(pathKey) && !hasQueuedWorkspaceFeedRequest(pathKey)) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      const waiters = workspaceFeedWaiters.get(pathKey) ?? new Set();
+      waiters.add(resolve);
+      workspaceFeedWaiters.set(pathKey, waiters);
+    });
+  };
+
+  const runWorkspaceFeedRequest = async (request: WorkspaceFeedRequest) => {
+    try {
+      const page = await backend.listConversations(1, request.target, {
+        kind: "workdir",
+        cwd: request.cwd,
+      });
+      const current = snapshot.workspaceFeeds.get(request.pathKey);
+      if (
+        request.seq !== requestSeq ||
+        startCount === 0 ||
+        !current ||
+        current.requestGeneration !== request.generation
+      ) {
+        return;
+      }
+      const authoritativeItems = page.items.filter(
+        (item) => workspaceProjectPathKey(item.cwd ?? "") === request.pathKey,
+      );
+      const previousIds = current.conversationIds;
+      const reconciled = reconcileSidebarConversations(
+        workspaceFeedRows(current),
+        authoritativeItems,
+        {
+          retainConversationIds: retainedConversationIds(),
+          preserveUpdatedAtConversationIds: activePositionLockIds(),
+          authoritativeComplete: page.items.length < request.target,
+        },
+      );
+      byId = new Map(byId);
+      for (const item of reconciled) byId.set(item.id, item);
+      const workspaceFeeds = new Map(snapshot.workspaceFeeds);
+      workspaceFeeds.set(request.pathKey, {
+        ...current,
+        cwd: request.cwd,
+        conversationIds: reconciled.map((item) => item.id),
+        totalCount: Math.max(0, page.totalCount),
+        status: "ready",
+        isLoadingMore: false,
+        error: null,
+        errorDetail: null,
+      });
+      const reconciledIds = new Set(reconciled.map((item) => item.id));
+      pruneOrphanedConversations(
+        previousIds.filter((id) => !reconciledIds.has(id)),
+        workspaceFeeds,
+      );
+      commit({ workspaceFeeds, byId });
+    } catch (error) {
+      const current = snapshot.workspaceFeeds.get(request.pathKey);
+      if (
+        request.seq !== requestSeq ||
+        startCount === 0 ||
+        !current ||
+        current.requestGeneration !== request.generation
+      ) {
+        return;
+      }
+      const workspaceFeeds = new Map(snapshot.workspaceFeeds);
+      workspaceFeeds.set(request.pathKey, {
+        ...current,
+        status: "ready",
+        isLoadingMore: false,
+        error: request.kind,
+        errorDetail: error instanceof Error ? error.message : String(error),
+      });
+      commit({ workspaceFeeds });
+    }
+  };
+
+  const drainWorkspaceFeedQueue = () => {
+    while (
+      startCount > 0 &&
+      activeWorkspaceFeedRequests < WORKSPACE_FEED_MAX_CONCURRENCY &&
+      workspaceFeedQueue.length > 0
+    ) {
+      const request = workspaceFeedQueue.shift()!;
+      if (activeWorkspaceFeedPathKeys.has(request.pathKey)) {
+        workspaceFeedQueue.push(request);
+        if (workspaceFeedQueue.every((item) => activeWorkspaceFeedPathKeys.has(item.pathKey))) {
+          break;
+        }
+        continue;
+      }
+      activeWorkspaceFeedRequests += 1;
+      activeWorkspaceFeedPathKeys.add(request.pathKey);
+      void runWorkspaceFeedRequest(request).finally(() => {
+        activeWorkspaceFeedRequests -= 1;
+        activeWorkspaceFeedPathKeys.delete(request.pathKey);
+        settleWorkspaceFeedWaiters(request.pathKey);
+        drainWorkspaceFeedQueue();
+      });
+    }
+  };
+
+  const enqueueWorkspaceFeedRequest = (
+    target: SidebarWorkspaceFeedTarget,
+    requestTarget: number,
+    kind: SidebarWorkspaceFeedErrorCode,
+  ) => {
+    const current = snapshot.workspaceFeeds.get(target.pathKey) ?? createWorkspaceFeed(target);
+    const generation = current.requestGeneration + 1;
+    const workspaceFeeds = new Map(snapshot.workspaceFeeds);
+    workspaceFeeds.set(target.pathKey, {
+      ...current,
+      cwd: target.cwd,
+      status: current.conversationIds.length > 0 ? "syncing" : "loading",
+      isLoadingMore: kind === "loadMoreFailed",
+      error: null,
+      errorDetail: null,
+      requestGeneration: generation,
+    });
+    commit({ workspaceFeeds });
+    const queuedIndex = workspaceFeedQueue.findIndex(
+      (request) => request.pathKey === target.pathKey,
+    );
+    const request: WorkspaceFeedRequest = {
+      pathKey: target.pathKey,
+      cwd: target.cwd,
+      target: requestTarget,
+      kind,
+      generation,
+      seq: requestSeq,
+    };
+    if (queuedIndex >= 0) {
+      const queued = workspaceFeedQueue[queuedIndex]!;
+      workspaceFeedQueue[queuedIndex] = {
+        ...request,
+        target: Math.max(queued.target, requestTarget),
+        kind:
+          queued.kind === "loadMoreFailed" || kind === "loadMoreFailed"
+            ? "loadMoreFailed"
+            : "listFailed",
+      };
+    } else {
+      workspaceFeedQueue.push(request);
+    }
+    drainWorkspaceFeedQueue();
+  };
+
   const knownWorkdirPathKeys = () => {
     const keys = new Set<string>();
     for (const workdir of snapshot.workdirs) {
@@ -254,7 +596,7 @@ export function createSidebarStore(
   ) => {
     const totalCount =
       extra?.totalCount ?? totalCountAfterListChange(snapshot.conversations, conversations);
-    commit({
+    commitScopedState({
       ...extra,
       conversations,
       byId,
@@ -270,12 +612,14 @@ export function createSidebarStore(
     switch (event.kind) {
       case "upsert": {
         const incoming = event.conversation;
+        const previous = byId.get(incoming.id);
         const preserveUpdatedAtIds = activePositionLockIds();
-        const merged = mergeSidebarConversation(byId.get(incoming.id), incoming, {
+        const merged = mergeSidebarConversation(previous, incoming, {
           preserveExistingUpdatedAt: preserveUpdatedAtIds.includes(incoming.id),
         });
         byId = new Map(byId);
         byId.set(merged.id, merged);
+        const workspaceFeeds = updateWorkspaceFeedsForConversation(previous, merged);
         const workdirActivity = bumpWorkdirActivity(
           snapshot.workdirActivity,
           merged.cwd,
@@ -295,24 +639,31 @@ export function createSidebarStore(
             ? snapshot.conversations.filter((item) => item.id !== merged.id)
             : snapshot.conversations;
         if (next === snapshot.conversations && workdirActivity === snapshot.workdirActivity) {
-          commit({ byId });
+          commit({ byId, workspaceFeeds });
           return;
         }
-        commitScopedList(next, { workdirActivity, listError: null, listErrorDetail: null });
+        commitScopedList(next, {
+          workspaceFeeds,
+          workdirActivity,
+          listError: null,
+          listErrorDetail: null,
+        });
         return;
       }
       case "delete": {
-        if (byId.has(event.conversationId)) {
+        const previous = byId.get(event.conversationId);
+        if (previous) {
           byId = new Map(byId);
           byId.delete(event.conversationId);
         }
+        const workspaceFeeds = updateWorkspaceFeedsForConversation(previous, undefined);
         const next = snapshot.conversations.filter((item) => item.id !== event.conversationId);
         scheduleWorkdirsDebounce();
         if (next === snapshot.conversations || next.length === snapshot.conversations.length) {
-          commit({ byId });
+          commit({ byId, workspaceFeeds });
           return;
         }
-        commitScopedList(next);
+        commitScopedList(next, { workspaceFeeds });
         return;
       }
       case "running": {
@@ -417,7 +768,7 @@ export function createSidebarStore(
       return;
     }
     const hasRows = snapshot.conversations.length > 0;
-    commit({
+    commitScopedState({
       listStatus: hasRows ? "syncing" : "loading",
       // The new first page owns pagination truth now. An older loadMore may
       // still settle at the transport layer, but its generation is stale and
@@ -441,19 +792,30 @@ export function createSidebarStore(
         byId.set(item.id, item);
         reconciledIds.add(item.id);
       }
-      for (const item of snapshot.conversations) {
-        if (!reconciledIds.has(item.id)) {
-          byId.delete(item.id);
-        }
-      }
       const fetchedPageCount = page.items.length > 0 ? 1 : 0;
       loadedPageCount = authoritative
         ? fetchedPageCount
         : Math.max(loadedPageCount, fetchedPageCount);
       const totalCount = Math.max(0, page.totalCount);
+      const workspaceFeeds = syncActiveWorkspaceFeed(snapshot.workspaceFeeds, {
+        conversations: reconciled,
+        totalCount,
+        listStatus: "ready",
+        isLoadingMore: false,
+        listError: null,
+        listErrorDetail: null,
+      });
+      pruneOrphanedConversations(
+        snapshot.conversations
+          .map((item) => item.id)
+          .filter((id) => !reconciledIds.has(id)),
+        workspaceFeeds,
+        reconciled,
+      );
       commit({
         conversations: reconciled,
         byId,
+        workspaceFeeds,
         totalCount,
         hasMore: page.items.length > 0 && persistedCount(reconciled) < totalCount,
         listStatus: "ready",
@@ -464,7 +826,7 @@ export function createSidebarStore(
       if (seq !== requestSeq || generation !== listGeneration || startCount === 0) {
         return;
       }
-      commit({
+      commitScopedState({
         listStatus: "ready",
         listError: "listFailed",
         listErrorDetail: error instanceof Error ? error.message : String(error),
@@ -608,7 +970,7 @@ export function createSidebarStore(
     const generation = listGeneration;
     const requestScope = scope;
     const pageNumber = loadedPageCount + 1;
-    commit({ isLoadingMore: true });
+    commitScopedState({ isLoadingMore: true });
     try {
       const page = await backend.listConversations(pageNumber, pageSize, requestScope);
       if (seq !== requestSeq || generation !== listGeneration || startCount === 0) {
@@ -626,7 +988,7 @@ export function createSidebarStore(
         loadedPageCount = pageNumber;
       }
       const totalCount = Math.max(0, page.totalCount);
-      commit({
+      commitScopedState({
         conversations: next,
         byId,
         totalCount,
@@ -639,7 +1001,7 @@ export function createSidebarStore(
       if (seq !== requestSeq || generation !== listGeneration || startCount === 0) {
         return;
       }
-      commit({
+      commitScopedState({
         isLoadingMore: false,
         listError: "loadMoreFailed",
         listErrorDetail: error instanceof Error ? error.message : String(error),

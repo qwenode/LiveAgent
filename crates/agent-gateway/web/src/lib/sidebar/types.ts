@@ -39,6 +39,26 @@ export type SidebarScope =
 
 export type SidebarListStatus = "initial" | "loading" | "syncing" | "ready";
 
+export type SidebarWorkspaceFeedErrorCode = "listFailed" | "loadMoreFailed";
+
+export type SidebarWorkspaceFeed = {
+  pathKey: string;
+  cwd: string;
+  conversationIds: readonly string[];
+  visibleLimit: number;
+  totalCount: number;
+  status: SidebarListStatus;
+  isLoadingMore: boolean;
+  error: SidebarWorkspaceFeedErrorCode | null;
+  errorDetail: string | null;
+  requestGeneration: number;
+};
+
+export type SidebarWorkspaceFeedTarget = {
+  pathKey: string;
+  cwd: string;
+};
+
 export type SidebarErrorCode =
   | "listFailed"
   | "loadMoreFailed"
