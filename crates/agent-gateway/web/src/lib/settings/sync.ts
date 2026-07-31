@@ -1209,8 +1209,6 @@ export function applyGatewaySettingsSyncPayload(
     memory: memory as AppSettings["memory"],
     customSettings: {
       ...incomingCustomSettings,
-      providerIdentities:
-        incomingCustomSettings.providerIdentities ?? current.customSettings.providerIdentities,
       rightDock: Object.hasOwn(incomingCustomSettings, "rightDock")
         ? mergeSyncedRightDockSettings(
             current.customSettings.rightDock,
