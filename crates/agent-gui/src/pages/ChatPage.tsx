@@ -18,7 +18,9 @@ import { HistoryShareModal } from "../components/chat/HistoryShareModal";
 import type { MentionComposerHandle } from "../components/chat/MentionComposer";
 import { NotifyToast } from "../components/chat/NotifyToast";
 import { SharedHistoryManagerModal } from "../components/chat/SharedHistoryManagerModal";
+import { TaskProgressIndicator } from "../components/chat/TaskProgressIndicator";
 import { ToolApprovalBar } from "../components/chat/ToolApprovalBar";
+import { useSequencedTaskProgress } from "../components/chat/useSequencedTaskProgress";
 import { PanelRightClose, PanelRightOpen } from "../components/icons";
 import { MacOsTitleBarToggle } from "../components/MacOsTitleBarSpacer";
 import type {
@@ -41,7 +43,12 @@ import {
   createConversationStateFromContext,
   type RenderTimelineItem,
 } from "../lib/chat/conversation/conversationState";
+<<<<<<< HEAD
 import { type ChatHistorySummary, setChatHistorySkills } from "../lib/chat/history/chatHistory";
+=======
+import type { LiveTranscriptStore } from "../lib/chat/conversation/liveTranscriptStore";
+import type { ChatHistorySummary } from "../lib/chat/history/chatHistory";
+>>>>>>> c63a2c22 (feat(chat): 添加当前会话任务进度指示器)
 import { memoryExtraction } from "../lib/chat/memory/extractionController";
 import type { CodeMentionReference } from "../lib/chat/messages/mentionReferences";
 import { openChatFileLink } from "../lib/chat/openChatFileLink";
@@ -51,6 +58,7 @@ import {
   createPendingHistoryItem,
   getFirstUserMessageText,
 } from "../lib/chat/page/chatPageHelpers";
+import { selectTodoProgressUpdates } from "../lib/chat/taskProgress";
 import type { ScrollFollowHandle } from "../lib/chat-scroll/useScrollFollow";
 import { tauriGitClient } from "../lib/git/tauriGitClient";
 import { setPreferredMonacoNlsLocale } from "../lib/monacoNls";
@@ -168,6 +176,54 @@ type ChatPageProps = {
   onToggleTheme: () => void;
   appUpdate?: AppUpdateController;
 };
+
+function CurrentTaskProgress(props: {
+  historyItems: readonly RenderTimelineItem[];
+  liveTranscriptStore: LiveTranscriptStore;
+  isConversationRunning: boolean;
+}) {
+  const { historyItems, liveTranscriptStore, isConversationRunning } = props;
+  const { t } = useLocale();
+  const getLiveRoundsSnapshot = useCallback(
+    () => liveTranscriptStore.getSnapshot().liveRounds,
+    [liveTranscriptStore],
+  );
+  const liveRounds = useSyncExternalStore(
+    liveTranscriptStore.subscribe,
+    getLiveRoundsSnapshot,
+    getLiveRoundsSnapshot,
+  );
+  const updates = useMemo(
+    () => selectTodoProgressUpdates(historyItems, liveRounds),
+    [historyItems, liveRounds],
+  );
+  const snapshot = useSequencedTaskProgress(updates, isConversationRunning);
+  const labels = useMemo(() => {
+    if (!snapshot) return null;
+    return {
+      title: t("chat.taskProgress.title"),
+      step: t("chat.taskProgress.step")
+        .replace("{current}", String(snapshot.currentStep))
+        .replace("{total}", String(snapshot.totalCount)),
+      completedCount: `${snapshot.completedCount}/${snapshot.totalCount} ${t(
+        "chat.taskProgress.completedCount",
+      )}`,
+      running: t("chat.taskProgress.running"),
+      pending: t("chat.taskProgress.pending"),
+      paused: t("chat.taskProgress.paused"),
+      completed: t("chat.taskProgress.completed"),
+    };
+  }, [snapshot, t]);
+
+  if (!snapshot || !labels) return null;
+  return (
+    <TaskProgressIndicator
+      snapshot={snapshot}
+      isConversationRunning={isConversationRunning}
+      labels={labels}
+    />
+  );
+}
 
 export function ChatPage(props: ChatPageProps) {
   const {
@@ -2210,6 +2266,16 @@ export function ChatPage(props: ChatPageProps) {
                 onEditQueuedTurn={editQueuedTurn}
                 onRemoveQueuedTurn={removeQueuedTurn}
                 onHeightChange={setComposerOverlayHeight}
+                taskProgressBar={
+                  <CurrentTaskProgress
+                    key={currentConversationId}
+                    historyItems={transcriptItems}
+                    liveTranscriptStore={liveTranscriptStore}
+                    isConversationRunning={
+                      isSending || isConversationRunning(currentConversationId)
+                    }
+                  />
+                }
                 approvalBar={approvalBar}
               />
               {isFileDropActive ? (
