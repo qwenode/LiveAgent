@@ -532,6 +532,7 @@ test("Codex Chat Completions streams forward reasoning effort", async () => {
   assert.equal(captured.options.toolChoice, "auto");
 });
 
+<<<<<<< HEAD
 test("DeepSeek Codex models respect explicit Responses request format", () => {
   for (const baseUrl of ["https://api.deepseek.com", "https://relay.example.test/v1"]) {
     const model = providers.createModelFromConfig(
@@ -692,6 +693,8 @@ test("DeepSeek Responses requests do not attach Chat payload adapter", () => {
 >>>>>>> 4a96669a (fix(providers): respect requestFormat for DeepSeek models)
 });
 
+=======
+>>>>>>> c86f4106 (test(providers): remove stale DeepSeek request-format tests)
 test("DeepSeek Anthropic streamSimpleByApi strips aborted tool calls before conversion", () => {
   const { localProviders, state } = loadProvidersWithCapturedAnthropicStream();
   const model = createDeepSeekAnthropicModel();
