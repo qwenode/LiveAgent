@@ -105,6 +105,7 @@ import {
   resolveEffectiveChatModelSelection,
 } from "./modelSelection";
 import {
+  buildModelFailoverPlan,
   resolveConversationTitleModelSelection,
   resolveMemorySummaryModelSelection,
   selectedModelsMatch,
@@ -441,6 +442,31 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       overrides?.runtimeControlsOverride ??
       settings.chatRuntimeControls;
     const providerConfig = createProviderRuntimeConfig(provider, model, runtimeControls);
+    // cc-switch style auto-failover plan for this turn (shared by the agent
+    // and text runtimes). The switch callback makes the winning fallback the
+    // conversation's selection so follow-up turns start on the healthy
+    // provider directly.
+    const failoverPlan = buildModelFailoverPlan(settings, effectiveSelectedModel, runtimeControls);
+    const failoverParams = failoverPlan
+      ? {
+          config: failoverPlan.config,
+          primary: failoverPlan.primary,
+          fallbacks: failoverPlan.fallbacks,
+          onSwitched: (event: {
+            target: { selectedModel: SelectedModel } | null;
+            round: number;
+            errorMessage: string;
+          }) => {
+            const nextSelectedModel =
+              event.target?.selectedModel ?? failoverPlan.primary.selectedModel;
+            updateConversationRuntimeEntry(conversationId, (prev) =>
+              selectedModelsMatch(prev.selectedModel, nextSelectedModel)
+                ? prev
+                : { ...prev, selectedModel: nextSelectedModel },
+            );
+          },
+        }
+      : undefined;
     const memorySummaryModelSelection = resolveMemorySummaryModelSelection(settings);
     const memoryExtractionModel = memorySummaryModelSelection
       ? {
@@ -1440,6 +1466,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
             providerId,
             model,
             runtime: providerConfig,
+            failover: failoverParams,
             runtimeModel,
             selectedModel,
             memoryExtractionModel,
@@ -1512,6 +1539,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
             providerId,
             model,
             runtime: providerConfig,
+            failover: failoverParams,
             runtimeModel,
             selectedModel,
             memoryExtractionModel,

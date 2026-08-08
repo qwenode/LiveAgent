@@ -58,6 +58,7 @@ export type GatewaySettingsSyncPayload = {
     "enableWebTerminal" | "enableWebSshTerminal" | "enableWebGit" | "enableWebTunnels"
   >;
   memory: AppSettings["memory"];
+  modelFailover: AppSettings["modelFailover"];
   customSettings: GatewaySettingsSyncCustomSettings;
   skills: AppSettings["skills"];
   chatRuntimeControls: AppSettings["chatRuntimeControls"];
@@ -82,6 +83,7 @@ const GATEWAY_SETTINGS_SYNC_FIELDS = [
   "ssh",
   "remote",
   "memory",
+  "modelFailover",
   "customSettings",
   "skills",
   "chatRuntimeControls",
@@ -1068,6 +1070,7 @@ export function buildGatewaySettingsSyncPayload(
       enableWebTunnels: settings.remote.enableWebTunnels,
     },
     memory: settings.memory,
+    modelFailover: settings.modelFailover,
     customSettings: syncableCustomSettings(settings.customSettings),
     skills: settings.skills,
     chatRuntimeControls: settings.chatRuntimeControls,
@@ -1203,6 +1206,9 @@ export function applyGatewaySettingsSyncPayload(
         ? applySyncedSshPatch(current.ssh, source.sshPatch, sshSecretUpdates)
         : current.ssh,
     memory: memory as AppSettings["memory"],
+    modelFailover: Object.hasOwn(source, "modelFailover")
+      ? (source.modelFailover as AppSettings["modelFailover"])
+      : current.modelFailover,
     customSettings: {
       ...incomingCustomSettings,
       rightDock: Object.hasOwn(incomingCustomSettings, "rightDock")
