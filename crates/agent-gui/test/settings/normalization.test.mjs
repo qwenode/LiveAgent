@@ -4,8 +4,8 @@ import { createTsModuleLoader } from "../helpers/load-ts-module.mjs";
 
 const loader = createTsModuleLoader();
 const settings = loader.loadModule("src/lib/settings/index.ts");
-const normalize = loader.loadModule("src/lib/settings/normalize.ts");
-const sync = loader.loadModule("src/lib/settings/sync.ts");
+const normalize = loader.loadModule("@liveagent/ui/lib/settings/normalize.ts");
+const sync = loader.loadModule("@liveagent/ui/lib/settings/sync.ts");
 const RIGHT_DOCK_TAB_IDS = settings.RIGHT_DOCK_SINGLETON_TAB_IDS;
 const PRESET_A_ID = "11111111-1111-4111-8111-111111111111";
 const PRESET_B_ID = "22222222-2222-4222-8222-222222222222";
