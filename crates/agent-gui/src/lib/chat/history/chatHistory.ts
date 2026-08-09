@@ -487,17 +487,9 @@ export async function setChatHistoryModel(id: string, selectedModelJson: string)
   );
 }
 
-export async function setChatHistorySkills(
-  id: string,
-  skillPresetId: string,
-  skillsDisabled: boolean,
-) {
+export async function setChatHistoryCwd(id: string, cwd: string) {
   return withConversationWriteLock(id, () =>
-    invoke<ChatHistorySummary>("chat_history_set_skills", {
-      id,
-      skillPresetId,
-      skillsDisabled,
-    }),
+    invoke<ChatHistorySummary>("chat_history_set_cwd", { id, cwd }),
   );
 }
 

@@ -325,17 +325,13 @@ pub async fn handle_history_pin(
     })
 }
 
-pub async fn handle_history_skills(
-    request: proto::HistorySkillsRequest,
-) -> Result<proto::HistorySkillsResponse, String> {
-    let summary = chat_history::chat_history_set_skills_inner(
-        request.conversation_id,
-        request.skill_preset_id,
-        request.skills_disabled,
-    )
-    .await?;
+pub async fn handle_history_set_cwd(
+    request: proto::HistorySetCwdRequest,
+) -> Result<proto::HistorySetCwdResponse, String> {
+    let summary =
+        chat_history::chat_history_set_cwd_inner(request.conversation_id, request.cwd).await?;
 
-    Ok(proto::HistorySkillsResponse {
+    Ok(proto::HistorySetCwdResponse {
         conversation: Some(build_proto_conversation_summary(summary)),
     })
 }

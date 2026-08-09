@@ -335,7 +335,7 @@ type GatewayEnvelope struct {
 	//	*GatewayEnvelope_HistoryBranch
 	//	*GatewayEnvelope_ProviderUsage
 	//	*GatewayEnvelope_ChatFileOpen
-	//	*GatewayEnvelope_HistorySkills
+	//	*GatewayEnvelope_HistorySetCwd
 	Payload       isGatewayEnvelope_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -833,10 +833,10 @@ func (x *GatewayEnvelope) GetChatFileOpen() *ChatFileOpenRequest {
 	return nil
 }
 
-func (x *GatewayEnvelope) GetHistorySkills() *HistorySkillsRequest {
+func (x *GatewayEnvelope) GetHistorySetCwd() *HistorySetCwdRequest {
 	if x != nil {
-		if x, ok := x.Payload.(*GatewayEnvelope_HistorySkills); ok {
-			return x.HistorySkills
+		if x, ok := x.Payload.(*GatewayEnvelope_HistorySetCwd); ok {
+			return x.HistorySetCwd
 		}
 	}
 	return nil
@@ -1042,8 +1042,8 @@ type GatewayEnvelope_ChatFileOpen struct {
 	ChatFileOpen *ChatFileOpenRequest `protobuf:"bytes,94,opt,name=chat_file_open,json=chatFileOpen,proto3,oneof"`
 }
 
-type GatewayEnvelope_HistorySkills struct {
-	HistorySkills *HistorySkillsRequest `protobuf:"bytes,100,opt,name=history_skills,json=historySkills,proto3,oneof"`
+type GatewayEnvelope_HistorySetCwd struct {
+	HistorySetCwd *HistorySetCwdRequest `protobuf:"bytes,95,opt,name=history_set_cwd,json=historySetCwd,proto3,oneof"`
 }
 
 func (*GatewayEnvelope_ChatCommand) isGatewayEnvelope_Payload() {}
@@ -1144,7 +1144,7 @@ func (*GatewayEnvelope_ProviderUsage) isGatewayEnvelope_Payload() {}
 
 func (*GatewayEnvelope_ChatFileOpen) isGatewayEnvelope_Payload() {}
 
-func (*GatewayEnvelope_HistorySkills) isGatewayEnvelope_Payload() {}
+func (*GatewayEnvelope_HistorySetCwd) isGatewayEnvelope_Payload() {}
 
 type AgentEnvelope struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
@@ -1215,6 +1215,7 @@ type AgentEnvelope struct {
 	//	*AgentEnvelope_ChatFileOpenResp
 	//	*AgentEnvelope_HistorySkillsResp
 	//	*AgentEnvelope_Error
+	//	*AgentEnvelope_HistorySetCwdResp
 	Payload       isAgentEnvelope_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1838,6 +1839,15 @@ func (x *AgentEnvelope) GetError() *ErrorResponse {
 	return nil
 }
 
+func (x *AgentEnvelope) GetHistorySetCwdResp() *HistorySetCwdResponse {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentEnvelope_HistorySetCwdResp); ok {
+			return x.HistorySetCwdResp
+		}
+	}
+	return nil
+}
+
 type isAgentEnvelope_Payload interface {
 	isAgentEnvelope_Payload()
 }
@@ -2094,6 +2104,10 @@ type AgentEnvelope_Error struct {
 	Error *ErrorResponse `protobuf:"bytes,99,opt,name=error,proto3,oneof"`
 }
 
+type AgentEnvelope_HistorySetCwdResp struct {
+	HistorySetCwdResp *HistorySetCwdResponse `protobuf:"bytes,100,opt,name=history_set_cwd_resp,json=historySetCwdResp,proto3,oneof"`
+}
+
 func (*AgentEnvelope_ChatEvent) isAgentEnvelope_Payload() {}
 
 func (*AgentEnvelope_CronManageResp) isAgentEnvelope_Payload() {}
@@ -2219,6 +2233,8 @@ func (*AgentEnvelope_ChatFileOpenResp) isAgentEnvelope_Payload() {}
 func (*AgentEnvelope_HistorySkillsResp) isAgentEnvelope_Payload() {}
 
 func (*AgentEnvelope_Error) isAgentEnvelope_Payload() {}
+
+func (*AgentEnvelope_HistorySetCwdResp) isAgentEnvelope_Payload() {}
 
 type ChatSelectedModel struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
@@ -12613,29 +12629,28 @@ func (x *ChatIngressAck) GetErrorMessage() string {
 	return ""
 }
 
-type HistorySkillsRequest struct {
+type HistorySetCwdRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	ConversationId string                 `protobuf:"bytes,1,opt,name=conversation_id,json=conversationId,proto3" json:"conversation_id,omitempty"`
-	SkillPresetId  string                 `protobuf:"bytes,2,opt,name=skill_preset_id,json=skillPresetId,proto3" json:"skill_preset_id,omitempty"`
-	SkillsDisabled bool                   `protobuf:"varint,3,opt,name=skills_disabled,json=skillsDisabled,proto3" json:"skills_disabled,omitempty"`
+	Cwd            string                 `protobuf:"bytes,2,opt,name=cwd,proto3" json:"cwd,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *HistorySkillsRequest) Reset() {
-	*x = HistorySkillsRequest{}
+func (x *HistorySetCwdRequest) Reset() {
+	*x = HistorySetCwdRequest{}
 	mi := &file_proto_v2_gateway_proto_msgTypes[151]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *HistorySkillsRequest) String() string {
+func (x *HistorySetCwdRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*HistorySkillsRequest) ProtoMessage() {}
+func (*HistorySetCwdRequest) ProtoMessage() {}
 
-func (x *HistorySkillsRequest) ProtoReflect() protoreflect.Message {
+func (x *HistorySetCwdRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_v2_gateway_proto_msgTypes[151]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -12647,53 +12662,46 @@ func (x *HistorySkillsRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use HistorySkillsRequest.ProtoReflect.Descriptor instead.
-func (*HistorySkillsRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use HistorySetCwdRequest.ProtoReflect.Descriptor instead.
+func (*HistorySetCwdRequest) Descriptor() ([]byte, []int) {
 	return file_proto_v2_gateway_proto_rawDescGZIP(), []int{151}
 }
 
-func (x *HistorySkillsRequest) GetConversationId() string {
+func (x *HistorySetCwdRequest) GetConversationId() string {
 	if x != nil {
 		return x.ConversationId
 	}
 	return ""
 }
 
-func (x *HistorySkillsRequest) GetSkillPresetId() string {
+func (x *HistorySetCwdRequest) GetCwd() string {
 	if x != nil {
-		return x.SkillPresetId
+		return x.Cwd
 	}
 	return ""
 }
 
-func (x *HistorySkillsRequest) GetSkillsDisabled() bool {
-	if x != nil {
-		return x.SkillsDisabled
-	}
-	return false
-}
-
-type HistorySkillsResponse struct {
+type HistorySetCwdResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Conversation  *ConversationSummary   `protobuf:"bytes,1,opt,name=conversation,proto3" json:"conversation,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *HistorySkillsResponse) Reset() {
-	*x = HistorySkillsResponse{}
+func (x *HistorySetCwdResponse) Reset() {
+	*x = HistorySetCwdResponse{}
 	mi := &file_proto_v2_gateway_proto_msgTypes[152]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *HistorySkillsResponse) String() string {
+func (x *HistorySetCwdResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*HistorySkillsResponse) ProtoMessage() {}
+func (*HistorySetCwdResponse) ProtoMessage() {}
 
-func (x *HistorySkillsResponse) ProtoReflect() protoreflect.Message {
+func (x *HistorySetCwdResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_v2_gateway_proto_msgTypes[152]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -12705,12 +12713,12 @@ func (x *HistorySkillsResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use HistorySkillsResponse.ProtoReflect.Descriptor instead.
-func (*HistorySkillsResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use HistorySetCwdResponse.ProtoReflect.Descriptor instead.
+func (*HistorySetCwdResponse) Descriptor() ([]byte, []int) {
 	return file_proto_v2_gateway_proto_rawDescGZIP(), []int{152}
 }
 
-func (x *HistorySkillsResponse) GetConversation() *ConversationSummary {
+func (x *HistorySetCwdResponse) GetConversation() *ConversationSummary {
 	if x != nil {
 		return x.Conversation
 	}
@@ -12721,7 +12729,7 @@ var File_proto_v2_gateway_proto protoreflect.FileDescriptor
 
 const file_proto_v2_gateway_proto_rawDesc = "" +
 	"\n" +
-	"\x16proto/v2/gateway.proto\x12\x14liveagent.gateway.v2\"\x87\"\n" +
+	"\x16proto/v2/gateway.proto\x12\x14liveagent.gateway.v2\"\x88\"\n" +
 	"\x0fGatewayEnvelope\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1c\n" +
@@ -12781,9 +12789,9 @@ const file_proto_v2_gateway_proto_rawDesc = "" +
 	"\x17managed_process_request\x18[ \x01(\v2+.liveagent.gateway.v2.ManagedProcessRequestH\x00R\x15managedProcessRequest\x12S\n" +
 	"\x0ehistory_branch\x18\\ \x01(\v2*.liveagent.gateway.v2.HistoryBranchRequestH\x00R\rhistoryBranch\x12S\n" +
 	"\x0eprovider_usage\x18] \x01(\v2*.liveagent.gateway.v2.ProviderUsageRequestH\x00R\rproviderUsage\x12Q\n" +
-	"\x0echat_file_open\x18^ \x01(\v2).liveagent.gateway.v2.ChatFileOpenRequestH\x00R\fchatFileOpen\x12S\n" +
-	"\x0ehistory_skills\x18d \x01(\v2*.liveagent.gateway.v2.HistorySkillsRequestH\x00R\rhistorySkillsB\t\n" +
-	"\apayloadJ\x04\bC\x10DJ\x04\bD\x10EJ\x04\bE\x10FJ\x04\bJ\x10K\"\xed-\n" +
+	"\x0echat_file_open\x18^ \x01(\v2).liveagent.gateway.v2.ChatFileOpenRequestH\x00R\fchatFileOpen\x12T\n" +
+	"\x0fhistory_set_cwd\x18_ \x01(\v2*.liveagent.gateway.v2.HistorySetCwdRequestH\x00R\rhistorySetCwdB\t\n" +
+	"\apayloadJ\x04\bC\x10DJ\x04\bD\x10EJ\x04\bE\x10FJ\x04\bJ\x10K\"\xee-\n" +
 	"\rAgentEnvelope\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1c\n" +
@@ -12852,9 +12860,9 @@ const file_proto_v2_gateway_proto_rawDesc = "" +
 	"\x12chat_ingress_batch\x18_ \x01(\v2&.liveagent.gateway.v2.ChatIngressBatchH\x00R\x10chatIngressBatch\x12Y\n" +
 	"\x13chat_ingress_resume\x18` \x01(\v2'.liveagent.gateway.v2.ChatIngressResumeH\x00R\x11chatIngressResume\x12_\n" +
 	"\x15chat_ingress_fragment\x18a \x01(\v2).liveagent.gateway.v2.ChatIngressFragmentH\x00R\x13chatIngressFragment\x12[\n" +
-	"\x13chat_file_open_resp\x18b \x01(\v2*.liveagent.gateway.v2.ChatFileOpenResponseH\x00R\x10chatFileOpenResp\x12]\n" +
-	"\x13history_skills_resp\x18d \x01(\v2+.liveagent.gateway.v2.HistorySkillsResponseH\x00R\x11historySkillsResp\x12;\n" +
-	"\x05error\x18c \x01(\v2#.liveagent.gateway.v2.ErrorResponseH\x00R\x05errorB\t\n" +
+	"\x13chat_file_open_resp\x18b \x01(\v2*.liveagent.gateway.v2.ChatFileOpenResponseH\x00R\x10chatFileOpenResp\x12;\n" +
+	"\x05error\x18c \x01(\v2#.liveagent.gateway.v2.ErrorResponseH\x00R\x05error\x12^\n" +
+	"\x14history_set_cwd_resp\x18d \x01(\v2+.liveagent.gateway.v2.HistorySetCwdResponseH\x00R\x11historySetCwdRespB\t\n" +
 	"\apayloadJ\x04\bC\x10DJ\x04\bD\x10EJ\x04\bE\x10FJ\x04\bN\x10O\"|\n" +
 	"\x11ChatSelectedModel\x12,\n" +
 	"\x12custom_provider_id\x18\x01 \x01(\tR\x10customProviderId\x12\x14\n" +
@@ -13772,12 +13780,11 @@ const file_proto_v2_gateway_proto_rawDesc = "" +
 	"\bCONTINUE\x10\x01\x12\x18\n" +
 	"\x14REPLAY_FROM_EXPECTED\x10\x02\x12\x13\n" +
 	"\x0fSEND_CHECKPOINT\x10\x03\x12\f\n" +
-	"\bREJECTED\x10\x04\"\x90\x01\n" +
-	"\x14HistorySkillsRequest\x12'\n" +
-	"\x0fconversation_id\x18\x01 \x01(\tR\x0econversationId\x12&\n" +
-	"\x0fskill_preset_id\x18\x02 \x01(\tR\rskillPresetId\x12'\n" +
-	"\x0fskills_disabled\x18\x03 \x01(\bR\x0eskillsDisabled\"f\n" +
-	"\x15HistorySkillsResponse\x12M\n" +
+	"\bREJECTED\x10\x04\"Q\n" +
+	"\x14HistorySetCwdRequest\x12'\n" +
+	"\x0fconversation_id\x18\x01 \x01(\tR\x0econversationId\x12\x10\n" +
+	"\x03cwd\x18\x02 \x01(\tR\x03cwd\"f\n" +
+	"\x15HistorySetCwdResponse\x12M\n" +
 	"\fconversation\x18\x01 \x01(\v2).liveagent.gateway.v2.ConversationSummaryR\fconversation*\xc6\x04\n" +
 	"\x0fTunnelFrameKind\x12!\n" +
 	"\x1dTUNNEL_FRAME_KIND_UNSPECIFIED\x10\x00\x12(\n" +
@@ -13972,8 +13979,8 @@ var file_proto_v2_gateway_proto_goTypes = []any{
 	(*ChatIngressRunResume)(nil),              // 152: liveagent.gateway.v2.ChatIngressRunResume
 	(*ChatIngressFragment)(nil),               // 153: liveagent.gateway.v2.ChatIngressFragment
 	(*ChatIngressAck)(nil),                    // 154: liveagent.gateway.v2.ChatIngressAck
-	(*HistorySkillsRequest)(nil),              // 155: liveagent.gateway.v2.HistorySkillsRequest
-	(*HistorySkillsResponse)(nil),             // 156: liveagent.gateway.v2.HistorySkillsResponse
+	(*HistorySetCwdRequest)(nil),              // 155: liveagent.gateway.v2.HistorySetCwdRequest
+	(*HistorySetCwdResponse)(nil),             // 156: liveagent.gateway.v2.HistorySetCwdResponse
 }
 var file_proto_v2_gateway_proto_depIdxs = []int32{
 	56,  // 0: liveagent.gateway.v2.GatewayEnvelope.chat_command:type_name -> liveagent.gateway.v2.ChatCommandRequest
@@ -14025,7 +14032,7 @@ var file_proto_v2_gateway_proto_depIdxs = []int32{
 	76,  // 46: liveagent.gateway.v2.GatewayEnvelope.history_branch:type_name -> liveagent.gateway.v2.HistoryBranchRequest
 	143, // 47: liveagent.gateway.v2.GatewayEnvelope.provider_usage:type_name -> liveagent.gateway.v2.ProviderUsageRequest
 	128, // 48: liveagent.gateway.v2.GatewayEnvelope.chat_file_open:type_name -> liveagent.gateway.v2.ChatFileOpenRequest
-	155, // 49: liveagent.gateway.v2.GatewayEnvelope.history_skills:type_name -> liveagent.gateway.v2.HistorySkillsRequest
+	155, // 49: liveagent.gateway.v2.GatewayEnvelope.history_set_cwd:type_name -> liveagent.gateway.v2.HistorySetCwdRequest
 	60,  // 50: liveagent.gateway.v2.AgentEnvelope.chat_event:type_name -> liveagent.gateway.v2.ChatEvent
 	66,  // 51: liveagent.gateway.v2.AgentEnvelope.cron_manage_resp:type_name -> liveagent.gateway.v2.CronManageResponse
 	68,  // 52: liveagent.gateway.v2.AgentEnvelope.history_list_resp:type_name -> liveagent.gateway.v2.HistoryListResponse
@@ -14087,8 +14094,8 @@ var file_proto_v2_gateway_proto_depIdxs = []int32{
 	151, // 108: liveagent.gateway.v2.AgentEnvelope.chat_ingress_resume:type_name -> liveagent.gateway.v2.ChatIngressResume
 	153, // 109: liveagent.gateway.v2.AgentEnvelope.chat_ingress_fragment:type_name -> liveagent.gateway.v2.ChatIngressFragment
 	129, // 110: liveagent.gateway.v2.AgentEnvelope.chat_file_open_resp:type_name -> liveagent.gateway.v2.ChatFileOpenResponse
-	156, // 111: liveagent.gateway.v2.AgentEnvelope.history_skills_resp:type_name -> liveagent.gateway.v2.HistorySkillsResponse
-	140, // 112: liveagent.gateway.v2.AgentEnvelope.error:type_name -> liveagent.gateway.v2.ErrorResponse
+	140, // 111: liveagent.gateway.v2.AgentEnvelope.error:type_name -> liveagent.gateway.v2.ErrorResponse
+	156, // 112: liveagent.gateway.v2.AgentEnvelope.history_set_cwd_resp:type_name -> liveagent.gateway.v2.HistorySetCwdResponse
 	9,   // 113: liveagent.gateway.v2.UploadReadableFilesRequest.files:type_name -> liveagent.gateway.v2.UploadReadableFile
 	8,   // 114: liveagent.gateway.v2.UploadReadableFilesResponse.files:type_name -> liveagent.gateway.v2.ChatUploadedFile
 	14,  // 115: liveagent.gateway.v2.TunnelDesiredState.tunnels:type_name -> liveagent.gateway.v2.TunnelSpec
@@ -14154,7 +14161,7 @@ var file_proto_v2_gateway_proto_depIdxs = []int32{
 	148, // 175: liveagent.gateway.v2.ChatIngressRecord.heartbeat:type_name -> liveagent.gateway.v2.ChatIngressHeartbeat
 	152, // 176: liveagent.gateway.v2.ChatIngressResume.runs:type_name -> liveagent.gateway.v2.ChatIngressRunResume
 	3,   // 177: liveagent.gateway.v2.ChatIngressAck.action:type_name -> liveagent.gateway.v2.ChatIngressAck.Action
-	69,  // 178: liveagent.gateway.v2.HistorySkillsResponse.conversation:type_name -> liveagent.gateway.v2.ConversationSummary
+	69,  // 178: liveagent.gateway.v2.HistorySetCwdResponse.conversation:type_name -> liveagent.gateway.v2.ConversationSummary
 	179, // [179:179] is the sub-list for method output_type
 	179, // [179:179] is the sub-list for method input_type
 	179, // [179:179] is the sub-list for extension type_name
@@ -14217,7 +14224,7 @@ func file_proto_v2_gateway_proto_init() {
 		(*GatewayEnvelope_HistoryBranch)(nil),
 		(*GatewayEnvelope_ProviderUsage)(nil),
 		(*GatewayEnvelope_ChatFileOpen)(nil),
-		(*GatewayEnvelope_HistorySkills)(nil),
+		(*GatewayEnvelope_HistorySetCwd)(nil),
 	}
 	file_proto_v2_gateway_proto_msgTypes[1].OneofWrappers = []any{
 		(*AgentEnvelope_ChatEvent)(nil),
@@ -14283,6 +14290,7 @@ func file_proto_v2_gateway_proto_init() {
 		(*AgentEnvelope_ChatFileOpenResp)(nil),
 		(*AgentEnvelope_HistorySkillsResp)(nil),
 		(*AgentEnvelope_Error)(nil),
+		(*AgentEnvelope_HistorySetCwdResp)(nil),
 	}
 	file_proto_v2_gateway_proto_msgTypes[15].OneofWrappers = []any{}
 	file_proto_v2_gateway_proto_msgTypes[23].OneofWrappers = []any{}

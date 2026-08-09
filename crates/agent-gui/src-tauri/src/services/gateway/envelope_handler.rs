@@ -320,10 +320,10 @@ impl GatewayController {
                 });
                 Ok(())
             }
-            Some(proto::gateway_envelope::Payload::HistorySkills(request)) => {
+            Some(proto::gateway_envelope::Payload::HistorySetCwd(request)) => {
                 let controller = Arc::clone(self);
                 tauri::async_runtime::spawn(async move {
-                    let result = match gateway_bridge::handle_history_skills(request).await {
+                    let result = match gateway_bridge::handle_history_set_cwd(request).await {
                         Ok(response) => {
                             if let Some(conversation) = response.conversation.as_ref() {
                                 controller
@@ -337,7 +337,7 @@ impl GatewayController {
                                     request_id: request_id.clone(),
                                     timestamp: now_unix_seconds(),
                                     payload: Some(
-                                        proto::agent_envelope::Payload::HistorySkillsResp(response),
+                                        proto::agent_envelope::Payload::HistorySetCwdResp(response),
                                     ),
                                 })
                                 .await
@@ -349,7 +349,7 @@ impl GatewayController {
                         }
                     };
                     if let Err(err) = result {
-                        eprintln!("gateway history.skills handler failed: {err}");
+                        eprintln!("gateway history.set_cwd handler failed: {err}");
                     }
                 });
                 Ok(())
