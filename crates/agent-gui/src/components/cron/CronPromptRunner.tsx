@@ -16,10 +16,12 @@ import { resolveRuntimePlatform } from "../../lib/runtimePlatform";
 import {
   type AppSettings,
   DEFAULT_CHAT_RUNTIME_CONTROLS,
+  filterMcpSettingsForWorkspace,
   isAgentDevMode,
   isAgentExecutionMode,
   type ReasoningLevel,
   resolveEffectiveSkillNames,
+  resolveWorkspaceResources,
 } from "../../lib/settings";
 import { buildBuiltinToolRegistry } from "../../lib/tools/builtinRegistry";
 import { createFileToolState } from "../../lib/tools/fileToolState";
@@ -60,13 +62,20 @@ function getActiveAgentPrompt(settings: AppSettings) {
   );
 }
 
-async function buildCronSkillsContext(settings: AppSettings, request: PromptRunRequest) {
-  const effective = resolveEffectiveSkillNames({
-    settings: settings.skills,
-    presetId: request.skillPresetId,
-    skillsDisabled: request.skillsDisabled,
-    executionMode: settings.system.executionMode,
-  });
+async function buildCronSkillsContext(settings: AppSettings, request: PromptRunRequest, workdir: string) {
+  const resources = resolveWorkspaceResources(settings, workdir);
+  const effective =
+    resources.mode === "inherit"
+      ? resolveEffectiveSkillNames({
+          settings: settings.skills,
+          presetId: request.skillPresetId,
+          skillsDisabled: request.skillsDisabled,
+          executionMode: settings.system.executionMode,
+        })
+      : {
+          enabled: resources.skillsEnabled,
+          skillNames: resources.skillNames,
+        };
   const selectedSkillNames = effective.skillNames.filter((name) => !isAlwaysEnabledSkillName(name));
   if (!effective.enabled || selectedSkillNames.length === 0) {
     return {
@@ -158,7 +167,7 @@ async function executeCronPromptRun(
     throw new Error(`Auto Prompt provider API key is empty: ${providerLabel}`);
   }
 
-  const skillsContext = await buildCronSkillsContext(settings, request);
+  const skillsContext = await buildCronSkillsContext(settings, request, workdir);
   const activeAgentPrompt = getActiveAgentPrompt(settings);
   const runtimePlatform = await resolveRuntimePlatform();
   const builtinRegistry = await buildBuiltinToolRegistry({
@@ -174,7 +183,7 @@ async function executeCronPromptRun(
       customProviderId: request.providerId,
       model: request.model,
     },
-    getMcpSettings: () => settings.mcp,
+    getMcpSettings: () => filterMcpSettingsForWorkspace(settings.mcp, resolveWorkspaceResources(settings, workdir)),
     mcpLoadFailureMode: "throw",
   });
 

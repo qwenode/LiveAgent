@@ -120,6 +120,7 @@ type ChatHistorySidebarProps = {
   onSelectProject?: (project: WorkspaceProject) => void;
   onNewConversationForProject?: (project: WorkspaceProject) => void;
   onBrowseProjectInFileTree?: (project: WorkspaceProject) => void;
+  onConfigureProjectResources?: (project: WorkspaceProject) => void;
   onStartRenamingProject?: (project: WorkspaceProject) => void;
   onProjectRenameDraftChange?: (value: string) => void;
   onCommitProjectRename?: () => void;
@@ -953,6 +954,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   renameDraft: string;
   onSelectProject: (project: WorkspaceProject) => void;
   onBrowseProjectInFileTree?: (project: WorkspaceProject) => void;
+  onConfigureProjectResources: (project: WorkspaceProject) => void;
   onStartRenamingProject: (project: WorkspaceProject) => void;
   onProjectRenameDraftChange: (value: string) => void;
   onCommitProjectRename: () => void;
@@ -981,6 +983,7 @@ const ProjectRow = memo(function ProjectRow(props: {
     renameDraft,
     onSelectProject,
     onBrowseProjectInFileTree,
+    onConfigureProjectResources,
     onStartRenamingProject,
     onProjectRenameDraftChange,
     onCommitProjectRename,
@@ -1341,6 +1344,14 @@ const ProjectRow = memo(function ProjectRow(props: {
                     sideOffset={6}
                     className="sidebar-context-menu"
                   >
+                    <DropdownMenuItem
+                      disabled={isInteractionDisabled}
+                      onSelect={() => onConfigureProjectResources(project)}
+                      className="gap-2"
+                    >
+                      <Blend className="h-3.5 w-3.5" />
+                      {t("chat.workspaceResources")}
+                    </DropdownMenuItem>
                     {!isDefaultProject ? (
                       <>
                         <DropdownMenuItem
@@ -1475,6 +1486,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
     onCreateProject,
     onSelectProject,
     onBrowseProjectInFileTree,
+    onConfigureProjectResources,
     onStartRenamingProject,
     onProjectRenameDraftChange,
     onCommitProjectRename,
@@ -1725,6 +1737,11 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
   const handleBrowseProjectInFileTree = useStableEvent((project: WorkspaceProject) => {
     if (!sectionsDisabled) {
       onBrowseProjectInFileTree?.(project);
+    }
+  });
+  const handleConfigureProjectResources = useStableEvent((project: WorkspaceProject) => {
+    if (!sectionsDisabled) {
+      onConfigureProjectResources?.(project);
     }
   });
   const handleStartRenamingProject = useStableEvent((project: WorkspaceProject) => {
@@ -2487,6 +2504,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
               onBrowseProjectInFileTree={
                 onBrowseProjectInFileTree ? handleBrowseProjectInFileTree : undefined
               }
+              onConfigureProjectResources={handleConfigureProjectResources}
               onStartRenamingProject={handleStartRenamingProject}
               onProjectRenameDraftChange={handleProjectRenameDraftChange}
               onCommitProjectRename={handleCommitProjectRename}
@@ -2915,6 +2933,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
                                     ? handleBrowseProjectInFileTree
                                     : undefined
                                 }
+                                onConfigureProjectResources={handleConfigureProjectResources}
                                 onStartRenamingProject={handleStartRenamingProject}
                                 onProjectRenameDraftChange={handleProjectRenameDraftChange}
                                 onCommitProjectRename={handleCommitProjectRename}

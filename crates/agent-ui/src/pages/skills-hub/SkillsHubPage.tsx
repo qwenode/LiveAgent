@@ -53,7 +53,7 @@ import {
   X,
   Zap,
 } from "@liveagent/app/components/icons";
-import { type AppSettings, updateSkills } from "@liveagent/app/lib/settings";
+import { type AppSettings, removeWorkspaceResourceReferences, updateSkills } from "@liveagent/app/lib/settings";
 import { GlassPanel, HubBackdrop, HubHeader } from "@liveagent/ui/components/hub/HubChrome";
 import { Markdown } from "@liveagent/ui/components/Markdown";
 import { Button } from "@liveagent/ui/components/ui/button";
@@ -1931,9 +1931,12 @@ export function SkillsHubPage(props: SkillsHubPageProps) {
     try {
       await manageSkill({ action: "delete", name: skillName });
       setSettings((prev) =>
-        updateSkills(prev, {
-          selected: prev.skills.selected.filter((name) => name !== skillName),
-        }),
+        removeWorkspaceResourceReferences(
+          updateSkills(prev, {
+            selected: prev.skills.selected.filter((name) => name !== skillName),
+          }),
+          { skillNames: [skillName] },
+        ),
       );
       setSkills((prev) => prev.filter((item) => item.name !== skillName));
       setPreviewInstalledSkill((current) => (current?.name === skillName ? null : current));

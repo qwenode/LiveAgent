@@ -16,6 +16,7 @@ import {
   type AppSettings,
   type McpServerConfig,
   type ToolPolicy,
+  removeWorkspaceResourceReferences,
   updateMcp,
   updateSystem,
 } from "@liveagent/app/lib/settings/index";
@@ -418,11 +419,14 @@ const McpServerCard = memo(function McpServerCard(props: {
           <ConfirmDeletePopover
             name={serverConfig.id || `Server ${idx + 1}`}
             onConfirm={() =>
-              setSettings((prev) =>
-                updateMcp(prev, {
+              setSettings((prev) => {
+                const next = updateMcp(prev, {
                   servers: prev.mcp.servers.filter((_, index) => index !== idx),
-                }),
-              )
+                });
+                return serverConfig.id
+                  ? removeWorkspaceResourceReferences(next, { mcpServerIds: [serverConfig.id] })
+                  : next;
+              })
             }
           >
             {(open) => (

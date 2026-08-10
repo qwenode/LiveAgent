@@ -57,10 +57,13 @@ import {
   type ChatRuntimeControls,
   type ExecutionMode,
   getSshProjectHostIds,
+  filterMcpSettingsForWorkspace,
   isAgentDevMode,
   isAgentExecutionMode,
+  removeWorkspaceResourceReferences,
   resolveEffectiveSkillNames,
   resolveSkillPreset,
+  resolveWorkspaceResources,
   type SelectedModel,
   updateMemorySettings,
   updateSkillPreset,
@@ -344,20 +347,34 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       effectiveProjectPathKey,
     );
     const effectiveIsAgentDevExecutionMode = isAgentDevMode(effectiveExecutionMode);
-    const effectiveSkillsSelection = resolveEffectiveSkillNames({
-      settings: settings.skills,
-      presetId:
-        overrides?.skillPresetIdOverride ??
-        gatewayBridgeRequest?.skillPresetIdOverride ??
-        runtimeEntry?.state.meta.skillPresetId,
-      skillsDisabled:
-        overrides?.skillsDisabledOverride ??
-        gatewayBridgeRequest?.skillsDisabledOverride ??
-        runtimeEntry?.state.meta.skillsDisabled,
-      executionMode: effectiveExecutionMode,
-    });
-    const effectiveSkillsEnabled = effectiveSkillsSelection.enabled;
-    const effectiveSkillNames = effectiveSkillsSelection.skillNames;
+    const workspaceResources = resolveWorkspaceResources(settings, effectiveWorkdir);
+    const getEffectiveMcpSettings = () =>
+      filterMcpSettingsForWorkspace(getMcpSettings(), workspaceResources);
+    // inherit keeps global skill presets; custom/off are workspace overrides.
+    const effectiveSkillsSelection =
+      workspaceResources.mode === "inherit"
+        ? resolveEffectiveSkillNames({
+            settings: settings.skills,
+            presetId:
+              overrides?.skillPresetIdOverride ??
+              gatewayBridgeRequest?.skillPresetIdOverride ??
+              runtimeEntry?.state.meta.skillPresetId,
+            skillsDisabled:
+              overrides?.skillsDisabledOverride ??
+              gatewayBridgeRequest?.skillsDisabledOverride ??
+              runtimeEntry?.state.meta.skillsDisabled,
+            executionMode: effectiveExecutionMode,
+          })
+        : {
+            presetId: undefined as string | undefined,
+            enabled: workspaceResources.skillsEnabled && effectiveIsAgentMode,
+            skillNames: workspaceResources.skillNames,
+          };
+    const effectiveSkillsEnabled =
+      workspaceResources.mode === "off"
+        ? false
+        : effectiveSkillsSelection.enabled && effectiveIsAgentMode;
+    const effectiveSkillNames = effectiveSkillsEnabled ? effectiveSkillsSelection.skillNames : [];
     const hasRemoteGatewayTarget =
       settings.remote.enabled &&
       settings.remote.gatewayUrl.trim() !== "" &&
@@ -1280,7 +1297,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
         }
       }
 
-      if (missing.length > 0) {
+      if (missing.length > 0 && workspaceResources.mode !== "custom") {
         const message = `找不到以下 Skills：${missing.join(", ")}（请先重新扫描固定 Skills 目录）`;
         setConversationErrorState(message);
         gatewayRuntimeErrorCode = "skills_missing";
@@ -1502,12 +1519,25 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
             skillsPrompt,
             onManagedSkillsChanged: (change) => {
               enableManagedSkills(change.names, effectiveSkillsSelection.presetId);
+              if (change.action !== "delete") return;
+              setSettings((prev) =>
+                removeWorkspaceResourceReferences(prev, { skillNames: change.names }),
+              );
             },
             agentTemplates: settings.agents,
-            getMcpSettings,
+            getMcpSettings: getEffectiveMcpSettings,
             getToolPolicies,
             applyMcpOps: (ops) => {
-              setSettings((prev) => applyMcpOpsToAppSettings(prev, ops));
+              setSettings((prev) => {
+                const next = applyMcpOpsToAppSettings(prev, ops);
+                const removedIds = ops
+                  .filter((op) => op.kind === "remove")
+                  .map((op) => ("id" in op ? String(op.id ?? "") : ""))
+                  .filter(Boolean);
+                return removedIds.length > 0
+                  ? removeWorkspaceResourceReferences(next, { mcpServerIds: removedIds })
+                  : next;
+              });
             },
             remoteWebTunnelsEnabled: settings.remote.enableWebTunnels,
             tunnelPublicBaseUrl: settings.remote.gatewayUrl.trim(),
