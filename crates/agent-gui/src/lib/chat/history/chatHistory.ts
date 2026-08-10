@@ -77,12 +77,6 @@ type ChatHistorySegmentWireRecord = {
   updatedAt: number;
 };
 
-type ChatHistoryAppendSegmentInput = {
-  conversation: ChatHistoryConversationInput;
-  previousSegment: ChatHistorySegmentWireRecord;
-  segment: ChatHistorySegmentWireRecord;
-};
-
 type ChatHistorySegmentWindowWireRecord = {
   segmentIndex: number;
   segmentId: string;

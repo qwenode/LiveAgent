@@ -351,35 +351,10 @@ pub(crate) async fn chat_history_append_segment_inner(
 ) -> Result<ChatHistorySummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut conn = open_db()?;
-        append_chat_history_segment_sync(&mut conn, &input)?;
-        get_summary_by_id(&conn, input.conversation.id.trim())
+        append_chat_history_segment_sync(&mut conn, &input)
     })
     .await
     .map_err(|e| format!("chat_history_append_segment join 失败：{e}"))?
-}
-
-fn append_chat_history_segment_sync(
-    conn: &mut Connection,
-    input: &ChatHistoryAppendSegmentInput,
-) -> Result<(), String> {
-    validate_append_segment_input(input)?;
-    let tx = conn
-        .transaction()
-        .map_err(|e| format!("开启 append segment 事务失败：{e}"))?;
-
-    validate_append_segment_preconditions(&tx, input)?;
-    upsert_chat_history_header(&tx, &input.conversation)?;
-    upsert_single_segment(
-        &tx,
-        input.conversation.id.trim(),
-        &input.previous_segment,
-    )?;
-    insert_single_segment(&tx, input.conversation.id.trim(), &input.segment)?;
-    verify_chat_history_consistency(&tx, input.conversation.id.trim())?;
-
-    tx.commit()
-        .map_err(|e| format!("提交 append segment 事务失败：{e}"))?;
-    Ok(())
 }
 
 #[tauri::command]
@@ -505,20 +480,6 @@ pub(crate) async fn chat_history_set_skills_inner(
     })
     .await
     .map_err(|e| format!("chat_history_set_skills join 失败：{e}"))?
-}
-
-#[tauri::command]
-pub async fn chat_history_set_skills(
-    id: String,
-    skill_preset_id: String,
-    skills_disabled: bool,
-    gateway_controller: tauri::State<'_, Arc<GatewayController>>,
-) -> Result<ChatHistorySummary, String> {
-    let summary = chat_history_set_skills_inner(id, skill_preset_id, skills_disabled).await?;
-    gateway_controller
-        .publish_history_sync(build_history_sync_upsert(&summary))
-        .await;
-    Ok(summary)
 }
 
 pub(crate) async fn chat_history_share_get_inner(
