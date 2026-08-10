@@ -491,7 +491,6 @@ export function useChatTurnQueue(params: UseChatTurnQueueParams) {
                 : queuedTurn.runtimeControls,
               executionModeOverride: queuedTurn.executionMode,
               workdirOverride: queuedTurn.workdir,
-              selectedSystemToolIdsOverride: queuedTurn.selectedSystemToolIds,
               skillPresetIdOverride: gatewayRequest.skillPresetId,
               skillsDisabledOverride: gatewayRequest.skillsDisabled,
             }
@@ -512,7 +511,6 @@ export function useChatTurnQueue(params: UseChatTurnQueueParams) {
           conversationIdOverride: targetConversationId,
           executionModeOverride: queuedTurn.executionMode,
           workdirOverride: queuedTurn.workdir,
-          selectedSystemToolIdsOverride: queuedTurn.selectedSystemToolIds,
           skillPresetIdOverride: gatewayRequest?.skillPresetId,
           skillsDisabledOverride: gatewayRequest?.skillsDisabled,
           runtimeControlsOverride: queuedTurn.runtimeControls,

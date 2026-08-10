@@ -284,7 +284,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
   }
 
   const enableManagedSkills = useCallback(
-    (names: readonly string[], presetId: string) => {
+    (names: readonly string[], presetId?: string) => {
       const normalizedNames = names.map((name) => String(name).trim()).filter(Boolean);
       if (normalizedNames.length === 0) return;
       setSettings((prev) => {
@@ -305,7 +305,6 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
     conversationIdOverride?: string;
     executionModeOverride?: ExecutionMode;
     workdirOverride?: string;
-    selectedSystemToolIdsOverride?: SystemToolId[];
     skillPresetIdOverride?: string;
     skillsDisabledOverride?: boolean;
     runtimeControlsOverride?: ChatRuntimeControls;
@@ -1519,10 +1518,6 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
             skillsPrompt,
             onManagedSkillsChanged: (change) => {
               enableManagedSkills(change.names, effectiveSkillsSelection.presetId);
-              if (change.action !== "delete") return;
-              setSettings((prev) =>
-                removeWorkspaceResourceReferences(prev, { skillNames: change.names }),
-              );
             },
             agentTemplates: settings.agents,
             getMcpSettings: getEffectiveMcpSettings,

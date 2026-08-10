@@ -2,12 +2,7 @@ import type { MentionComposerDraft } from "@liveagent/ui/components/chat/Mention
 import type { MutableRefObject } from "react";
 import type { HistoryMessageRef } from "../../../lib/chat/conversation/conversationState";
 import type { PendingUploadedFile } from "../../../lib/chat/messages/uploadedFiles";
-import type {
-  ChatRuntimeControls,
-  ExecutionMode,
-  ProviderId,
-  SystemToolId,
-} from "../../../lib/settings";
+import type { ChatRuntimeControls, ExecutionMode, ProviderId } from "../../../lib/settings";
 import type { ConversationRuntimeEntry } from "../runtime/chatPageRuntime";
 
 export type GatewaySelectedModelEvent = {
@@ -72,7 +67,6 @@ export type ActiveGatewayBridgeRequest = {
   runtimeControlsOverride?: ChatRuntimeControls;
   executionModeOverride?: ExecutionMode;
   workdirOverride?: string;
-  selectedSystemToolIdsOverride?: SystemToolId[];
   skillPresetIdOverride?: string;
   skillsDisabledOverride?: boolean;
 };
@@ -84,7 +78,6 @@ export type SendChatAction = (overrides?: {
   conversationIdOverride?: string;
   executionModeOverride?: ExecutionMode;
   workdirOverride?: string;
-  selectedSystemToolIdsOverride?: SystemToolId[];
   skillPresetIdOverride?: string;
   skillsDisabledOverride?: boolean;
   runtimeControlsOverride?: ChatRuntimeControls;
