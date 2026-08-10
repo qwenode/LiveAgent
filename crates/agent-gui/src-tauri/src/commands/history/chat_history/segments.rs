@@ -113,7 +113,7 @@ fn validate_append_segment_input(input: &ChatHistoryAppendSegmentInput) -> Resul
         return Err("segmentIndex 必须等于 activeSegmentIndex".to_string());
     }
     if input.previous_segment.segment_index + 1 != input.segment.segment_index {
-        return Err("previousSegment 必须紧邻新增 segment".to_string());
+        return Err("previousSegment 与 segment 必须连续".to_string());
     }
     Ok(())
 }
@@ -153,7 +153,7 @@ fn validate_append_segment_preconditions(
     }
     if input.previous_segment.segment_index != active_segment_index {
         return Err(format!(
-            "append segment 前置校验失败：previousSegmentIndex 应为 {}，实际为 {}",
+            "append segment 待封存分段错误：期望 segmentIndex={}，实际为 {}",
             active_segment_index, input.previous_segment.segment_index
         ));
     }
@@ -216,6 +216,23 @@ fn validate_append_segment_preconditions(
             "append segment 不允许覆盖已有分段：segmentIndex={}",
             input.segment.segment_index
         ));
+    }
+
+    let stored_previous_segment_id = conn
+        .query_row(
+            "
+            SELECT segment_id
+            FROM chatHistorySegment
+            WHERE conversation_id = ?1 AND segment_index = ?2
+            ",
+            params![conversation_id, active_segment_index],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| format!("读取待封存历史分段失败：{e}"))?
+        .ok_or_else(|| "append segment 缺少待封存的现有活跃分段".to_string())?;
+    if stored_previous_segment_id != input.previous_segment.segment_id {
+        return Err("append segment 待封存分段身份不一致".to_string());
     }
 
     Ok(())

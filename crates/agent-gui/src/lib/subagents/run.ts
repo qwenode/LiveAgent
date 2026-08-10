@@ -495,6 +495,7 @@ export async function executeSubagentRun(
           },
           persist: async (state) => {
             schedulePersist("running", state);
+            return undefined;
           },
         },
         buildPreparedContext: (state) => buildRequestContext(state),

@@ -1,5 +1,6 @@
 import type { Message } from "@earendil-works/pi-ai";
 import { invoke } from "@tauri-apps/api/core";
+import { parseTaskListState } from "../../tools/taskState";
 import { normalizeConversationSystemPrompt } from "../context/systemPrompt";
 import {
   type ConversationViewState,
@@ -74,6 +75,12 @@ type ChatHistorySegmentWireRecord = {
   endMessageId?: string;
   createdAt: number;
   updatedAt: number;
+};
+
+type ChatHistoryAppendSegmentInput = {
+  conversation: ChatHistoryConversationInput;
+  previousSegment: ChatHistorySegmentWireRecord;
+  segment: ChatHistorySegmentWireRecord;
 };
 
 type ChatHistorySegmentWindowWireRecord = {
@@ -242,7 +249,19 @@ function parseStoredChatContextMeta(
     activeSegmentIndex: counts.activeSegmentIndex,
     totalSegmentCount: counts.totalSegmentCount,
     totalMessageCount: counts.totalMessageCount,
+    taskList: parseStoredTaskListState(parsed.taskList),
   };
+}
+
+function parseStoredTaskListState(value: unknown) {
+  if (value === undefined) return undefined;
+  try {
+    return parseTaskListState(value);
+  } catch (error) {
+    // 任务清单是辅助运行态:损坏数据只丢弃清单本身,绝不能让整个会话窗口打不开。
+    console.warn("忽略无法解析的历史任务清单状态", error);
+    return undefined;
+  }
 }
 
 export async function listChatHistory(
@@ -564,12 +583,13 @@ async function writeConversationRuntime(
 
   if (activeSegment.segmentIndex === cursor.activeSegmentIndex + 1) {
     const previousSegment = state.segments.find(
-      (segment) =>
-        segment.segmentIndex === cursor.activeSegmentIndex &&
-        segment.segmentId === cursor.activeSegmentId,
+      (segment) => segment.segmentIndex === cursor.activeSegmentIndex,
     );
     if (!previousSegment) {
-      throw new Error("追加历史分段时缺少前一活跃分段");
+      throw new Error("追加历史分段时缺少待封存的上一活跃分段");
+    }
+    if (previousSegment.segmentId !== cursor.activeSegmentId) {
+      throw new Error("待封存历史分段身份与持久化游标不一致");
     }
     return appendChatHistorySegmentRaw({
       conversation,
