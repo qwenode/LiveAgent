@@ -62,6 +62,7 @@ message GatewayEnvelope {
     ProviderUsageRequest provider_usage = 93;
     ChatFileOpenRequest chat_file_open = 94;
     HistorySetCwdRequest history_set_cwd = 95;
+    HistorySkillsRequest history_skills = 100;
   }
 
   // Legacy tunnel control/frame payloads (pre-rewrite protocol) and the
@@ -135,9 +136,9 @@ message AgentEnvelope {
     ChatIngressResume chat_ingress_resume = 96;
     ChatIngressFragment chat_ingress_fragment = 97;
     ChatFileOpenResponse chat_file_open_resp = 98;
-    HistorySkillsResponse history_skills_resp = 100;
     ErrorResponse error = 99;
-    HistorySetCwdResponse history_set_cwd_resp = 100;
+    HistorySkillsResponse history_skills_resp = 100;
+    HistorySetCwdResponse history_set_cwd_resp = 101;
   }
 
   // Legacy tunnel control/frame payloads (pre-rewrite protocol) and the
@@ -1296,5 +1297,15 @@ message HistorySetCwdRequest {
 }
 
 message HistorySetCwdResponse {
+  ConversationSummary conversation = 1;
+}
+
+message HistorySkillsRequest {
+  string conversation_id = 1;
+  string skill_preset_id = 2;
+  bool skills_disabled = 3;
+}
+
+message HistorySkillsResponse {
   ConversationSummary conversation = 1;
 }
