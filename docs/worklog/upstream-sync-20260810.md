@@ -296,3 +296,9 @@
 - Local customizations still present: sidebar `workspaceFeeds` / visible-project pagination / pin divider hybrid; skill-presets hybrid on inherit send/cron.
 - No push / no PR / no merge to main (policy unchanged).
 
+## Frontend green fix (2026-08-10 cont. 2)
+
+- Restored `focusComposerAfterConversationChange` + action ref wiring on `ChatPage` (dropped after #399); also wire `cancelPendingWorkspaceConversationActionRef` into workspace projects/removal.
+- CRLF-normalize source reads in edit-resend / mention / focus tests (Windows autocrlf).
+- Replaced obsolete `SkillPresetManager` interaction suite (component removed) with a presence guard.
+- Validation: `pnpm --filter liveagent test:frontend` **1538/1538 pass**; settings/i18n/skills/sidebar combined still green.

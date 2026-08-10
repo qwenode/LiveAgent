@@ -7,7 +7,7 @@ const sourceRoots = [
 ];
 
 function source(root) {
-  return readFileSync(new URL("MentionComposer.tsx", root), "utf8");
+  return readFileSync(new URL("MentionComposer.tsx", root), "utf8").replaceAll("\r\n", "\n");
 }
 
 function extractFunction(src, name) {

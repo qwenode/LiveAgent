@@ -5,15 +5,15 @@ import test from "node:test";
 const chatPageSource = readFileSync(
   new URL("../../src/pages/ChatPage.tsx", import.meta.url),
   "utf8",
-);
+).replaceAll("\r\n", "\n");
 const workspaceProjectsSource = readFileSync(
   new URL("../../src/pages/chat/workspace/useWorkspaceProjects.ts", import.meta.url),
   "utf8",
-);
+).replaceAll("\r\n", "\n");
 const historyActionsSource = readFileSync(
   new URL("../../src/pages/chat/history/useConversationHistoryActions.ts", import.meta.url),
   "utf8",
-);
+).replaceAll("\r\n", "\n");
 
 function between(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -40,7 +40,7 @@ test("conversation-change focus waits for two animation frames", () => {
   const helper = between(
     chatPageSource,
     "const focusComposerAfterConversationChange = useCallback",
-    "const conversationLoadSequenceRef",
+    "const {\n    queuedChatTurnsRef,",
   );
 
   assert.equal(countOccurrences(helper, "window.requestAnimationFrame("), 2);

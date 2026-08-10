@@ -274,6 +274,10 @@ export function ChatPage(props: ChatPageProps) {
     () => undefined,
   );
   const prepareComposerForConversationChangeActionRef = useRef<() => void>(() => undefined);
+  const focusComposerAfterConversationChangeActionRef = useRef<() => void>(() => undefined);
+  // Pending workspace-conversation handoff was simplified away; keep a stable
+  // cancel hook so project select/remove paths can still call it safely.
+  const cancelPendingWorkspaceConversationActionRef = useRef<() => void>(() => undefined);
   const [activeView, setActiveView] = useState<"chat" | "skills-hub" | "mcp-hub">("chat");
   const [resourceSettingsProject, setResourceSettingsProject] = useState<WorkspaceProject | null>(
     null,
@@ -324,6 +328,8 @@ export function ChatPage(props: ChatPageProps) {
     setRightDockOpen,
     startNewConversationActionRef,
     prepareComposerForConversationChangeActionRef,
+    focusComposerAfterConversationChangeActionRef,
+    cancelPendingWorkspaceConversationActionRef,
   });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const { remoteRuntimeStatus, setRemoteRuntimeStatus } = useGatewayStatus({
@@ -953,6 +959,15 @@ export function ChatPage(props: ChatPageProps) {
 
   prepareComposerForConversationChangeActionRef.current = prepareComposerForConversationChange;
 
+  const focusComposerAfterConversationChange = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        composerRef.current?.focus();
+      });
+    });
+  }, []);
+  focusComposerAfterConversationChangeActionRef.current = focusComposerAfterConversationChange;
+
   const {
     queuedChatTurnsRef,
     queuedChatTurnEditSlotRef,
@@ -1161,6 +1176,7 @@ export function ChatPage(props: ChatPageProps) {
     setRightDockOpen,
     displayedConversationWorkdir,
     startNewConversationActionRef,
+    cancelPendingWorkspaceConversationActionRef,
   });
 
   useEffect(() => {
@@ -1502,6 +1518,7 @@ export function ChatPage(props: ChatPageProps) {
     startNewConversationActionRef.current({
       workdir: isAgentMode ? activeWorkspaceProjectPath || undefined : undefined,
     });
+    focusComposerAfterConversationChangeActionRef.current();
   }, [activeWorkspaceProjectPath, isAgentMode, openController]);
 
   // 动作总线（Rust `app:action`）里 ChatPage 拥有的动作在下方统一监听
@@ -1619,13 +1636,10 @@ export function ChatPage(props: ChatPageProps) {
           // 与侧栏"新建对话"一致：从 Hub 返回且当前已是空白草稿会话时直接复用。
           if (!wasInHub || !isDraftConversationRef.current) {
             handleNewConversationRef.current();
+          } else {
+            // Hub draft reuse: no new draft, still focus after the view switch paints.
+            focusComposerAfterConversationChangeActionRef.current();
           }
-          // 视图与会话切换渲染完成后再聚焦输入框。
-          window.requestAnimationFrame(() => {
-            window.requestAnimationFrame(() => {
-              composerRef.current?.focus();
-            });
-          });
           break;
         }
         case "open-conversation": {
@@ -1873,6 +1887,7 @@ export function ChatPage(props: ChatPageProps) {
           onNewConversation={() => {
             setActiveView("chat");
             if (activeView !== "chat" && isDraftConversation) {
+              focusComposerAfterConversationChangeActionRef.current();
               return;
             }
             handleNewConversation();

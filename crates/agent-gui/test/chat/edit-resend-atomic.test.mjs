@@ -29,10 +29,12 @@ const messageRef = {
   contentHash: "fnv1a32:12345678",
 };
 
-const sendSource = fs.readFileSync(
-  new URL("../../src/pages/chat/runtime/useSendChatTurn.ts", import.meta.url),
-  "utf8",
-);
+const sendSource = fs
+  .readFileSync(
+    new URL("../../src/pages/chat/runtime/useSendChatTurn.ts", import.meta.url),
+    "utf8",
+  )
+  .replaceAll("\r\n", "\n");
 
 test("edit-resend delegates the replacement anchor to the send preflight", async () => {
   const calls = [];

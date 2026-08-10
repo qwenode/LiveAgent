@@ -8,7 +8,7 @@ const sourceRoots = [
 const sharedProjectToolsRoot = new URL("../../../agent-ui/src/components/", import.meta.url);
 
 function source(root, relativePath) {
-  return readFileSync(new URL(relativePath, root), "utf8");
+  return readFileSync(new URL(relativePath, root), "utf8").replaceAll("\r\n", "\n");
 }
 
 test("the shared composer restores the last editor selection before external mention insertion", () => {
