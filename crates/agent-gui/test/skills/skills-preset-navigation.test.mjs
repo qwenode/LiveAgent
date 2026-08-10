@@ -2,78 +2,59 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const implementations = [
-  {
-    label: "GUI",
-    page: new URL("../../src/pages/skills-hub/SkillsHubPage.tsx", import.meta.url),
-    composer: new URL("../../src/components/chat/MentionComposer.tsx", import.meta.url),
-    composerBar: new URL(
-      "../../src/pages/chat/components/ChatComposerBar.tsx",
-      import.meta.url,
-    ),
-    i18n: new URL("../../src/i18n/config.ts", import.meta.url),
-  },
-  {
-    label: "WebUI",
-    page: new URL(
-      "../../../agent-gateway/web/src/pages/skills-hub/SkillsHubPage.tsx",
-      import.meta.url,
-    ),
-    composer: new URL(
-      "../../../agent-gateway/web/src/components/chat/MentionComposer.tsx",
-      import.meta.url,
-    ),
-    composerBar: new URL(
-      "../../../agent-gateway/web/src/pages/chat/ChatComposerBar.tsx",
-      import.meta.url,
-    ),
-    i18n: new URL("../../../agent-gateway/web/src/i18n/config.ts", import.meta.url),
-  },
-];
+// Skills Hub lives under @liveagent/ui after the #399 UI unify. Preset *data*
+// still exists (settings.skills.presets, cron skillPresetId, chat meta), but
+// the Hub no longer exposes a dedicated "presets" tab — Default membership is
+// the installed selection, and named presets are chosen at send/cron time.
 
-for (const { label, page, composer, composerBar, i18n } of implementations) {
-  const source = readFileSync(page, "utf8");
-  const composerSource = readFileSync(composer, "utf8");
-  const composerBarSource = readFileSync(composerBar, "utf8");
-  const translations = readFileSync(i18n, "utf8");
+const skillsHubSource = readFileSync(
+  new URL("../../../agent-ui/src/pages/skills-hub/SkillsHubPage.tsx", import.meta.url),
+  "utf8",
+);
+const sendSource = readFileSync(
+  new URL("../../src/pages/chat/runtime/useSendChatTurn.ts", import.meta.url),
+  "utf8",
+);
+const cronRunnerSource = readFileSync(
+  new URL("../../src/components/cron/CronPromptRunner.tsx", import.meta.url),
+  "utf8",
+);
+const guiI18n = readFileSync(new URL("../../src/i18n/config.ts", import.meta.url), "utf8");
+const webI18n = readFileSync(
+  new URL("../../../agent-gateway/web/src/i18n/config.ts", import.meta.url),
+  "utf8",
+);
 
-  test(`${label} keeps Default on Installed and custom presets on their own tab`, () => {
-    assert.match(source, /type SkillsHubView = "installed" \| "presets" \| "store" \| "import"/);
-    assert.match(source, /value: "presets" as const,[\s\S]*settings\.skillsHubPresetsTab/);
-    assert.match(
-      source,
-      /const activePreset =\s*view === "presets" && activeCustomPreset\s*\? activeCustomPreset\s*: defaultPreset/,
-    );
-    assert.match(source, /view === "presets" \? \([\s\S]*customPresets\.map/);
-  });
+test("shared Skills Hub views are installed/store/import (no presets tab)", () => {
+  assert.match(skillsHubSource, /type SkillsHubView = "installed" \| "store" \| "import"/);
+  assert.doesNotMatch(skillsHubSource, /"presets"/);
+});
 
-  test(`${label} only offers installed Skills as custom preset members`, () => {
-    assert.match(
-      source,
-      /view === "installed" \|\| view === "presets" \? \([\s\S]*sortedFiltered\.map/,
-    );
-    assert.match(source, /settings\.skillsPresetEditingHint/);
+test("installing store Skills enables and selects them on the Default membership", () => {
+  const start = skillsHubSource.indexOf("  const enableInstalledSkillsFromJob = useCallback(");
+  const end = skillsHubSource.indexOf("\n  useEffect(() => {", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const installUpdate = skillsHubSource.slice(start, end);
+  assert.match(installUpdate, /updateSkills\(prev, \{/);
+  assert.match(installUpdate, /enabled: true/);
+  assert.match(installUpdate, /selected: Array\.from\(next\)/);
+  assert.doesNotMatch(installUpdate, /activePreset\.id/);
+});
+
+test("GUI send path still resolves skill presets on inherit workspaces", () => {
+  assert.match(sendSource, /resolveSkillPreset/);
+  assert.match(sendSource, /resolveWorkspaceResources/);
+});
+
+test("cron auto-prompt still resolves skill presets under inherit workspace mode", () => {
+  assert.match(cronRunnerSource, /resolveEffectiveSkillNames/);
+  assert.match(cronRunnerSource, /presetId: request\.skillPresetId/);
+  assert.match(cronRunnerSource, /resources\.mode === "inherit"/);
+});
+
+test("both hosts keep skills preset editing copy", () => {
+  for (const translations of [guiI18n, webI18n]) {
     assert.equal(translations.match(/"settings\.skillsPresetEditingHint":/g)?.length, 2);
-  });
-
-  test(`${label} adds newly installed store Skills to Default`, () => {
-    const start = source.indexOf("  const enableInstalledSkillsFromJob = useCallback(");
-    const end = source.indexOf("\n  useEffect(() => {", start);
-    assert.notEqual(start, -1);
-    assert.notEqual(end, -1);
-    const installUpdate = source.slice(start, end);
-    assert.match(
-      installUpdate,
-      /resolveSkillPreset\(prev\.skills, DEFAULT_SKILL_PRESET_ID\)/,
-    );
-    assert.doesNotMatch(installUpdate, /activePreset\.id/);
-  });
-
-  test(`${label} configures conversation presets through the /skills command`, () => {
-    assert.match(composerSource, /type: "skillsCommand"/);
-    assert.match(composerSource, /normalizedMentionQuery === "skills"/);
-    assert.match(composerSource, /skillsCommand\?\.onChange\(suggestion\.presetId, suggestion\.disabled\)/);
-    assert.match(composerBarSource, /skillsCommand=\{/);
-    assert.doesNotMatch(composerBarSource, /value=\{skillsDisabled \? "__disabled__"/);
-  });
-}
+  }
+});

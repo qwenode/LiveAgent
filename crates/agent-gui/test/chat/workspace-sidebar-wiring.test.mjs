@@ -4,7 +4,7 @@ import test from "node:test";
 
 const readSource = (url) => readFileSync(url, "utf8").replaceAll("\r\n", "\n");
 const sidebarSource = readSource(
-  new URL("../../src/components/chat/ChatHistorySidebar.tsx", import.meta.url),
+  new URL("../../../agent-ui/src/components/chat/ChatHistorySidebar.tsx", import.meta.url),
 );
 const containerSource = readSource(
   new URL("../../src/pages/chat/sidebar/ChatSidebarContainer.tsx", import.meta.url),
@@ -82,7 +82,8 @@ test("desktop workspace feed loading excludes hidden projects and preserves non-
   assert.match(sidebarSource, /if \(!showProjects\) return items;/);
   assert.match(sidebarSource, /if \(projectsCollapsed\) return \[\];/);
   assert.match(sidebarSource, /workspaceFeeds\.get\(pathKey\)/);
-  assert.match(sidebarSource, /renderedProjects\.map\(renderWorkspaceProject\)/);
+  assert.match(sidebarSource, /renderedProjects\.map\(\(project, projectIndex\) =>/);
+  assert.match(sidebarSource, /\{renderWorkspaceProject\(project\)\}/);
   assert.match(sidebarSource, /const historyVirtualizer = useVirtualizer\(/);
   assert.match(sidebarSource, /virtualHistoryRows\.map\(\(virtualRow\) =>/);
   assert.match(
@@ -91,13 +92,13 @@ test("desktop workspace feed loading excludes hidden projects and preserves non-
   );
   const autoPagingEffect = between(
     sidebarSource,
-    "  useEffect(() => {\n    if (\n      !hasMore",
-    "  useEffect(() => {\n    if (!pendingProjectRemoveId)",
+    "  useEffect(() => {\n    if (\n      sectionsDisabled ||\n      !hasMore",
+    "  }, [\n    sectionsDisabled,\n    hasMore,",
   );
   assertInOrder(autoPagingEffect, [
     "lastVirtualHistoryIndex < items.length - HISTORY_LOAD_MORE_THRESHOLD",
     "return;",
-    "onLoadMore();",
+    "handleLoadMore();",
   ]);
 });
 
@@ -108,6 +109,10 @@ test("desktop workspace project names use ellipsis instead of a fade mask", () =
 });
 
 test("desktop workspace conversation opening waits for directory, project, and scope readiness", () => {
+  // Project select/new/remove paths still cancel any pending workspace conversation
+  // action and validate the directory before activating the project. Conversation
+  // selection itself is routed through the shared sidebar onSelectConversation
+  // after ChatPage switches to the chat view (no separate pending-seq pipeline).
   const projectSelectionHandler = between(
     workspaceSource,
     "const handleSelectWorkspaceProject",
@@ -125,37 +130,10 @@ test("desktop workspace conversation opening waits for directory, project, and s
     const destructiveHandler = between(workspaceRemovalSource, startMarker, endMarker);
     assert.match(destructiveHandler, /cancelPendingWorkspaceConversationActionRef\.current\(\)/);
   }
-  assert.match(chatPageSource, /cancelPendingWorkspaceConversationActionRef,/);
-
-  const handler = between(
-    chatPageSource,
-    "const handleSelectWorkspaceConversation",
-    "  useEffect(() => {",
-  );
-  assert.match(handler, /workspaceProjectPathKey\(activeWorkspaceProjectPath\) === targetPathKey/);
-  assert.match(handler, /if \(!\(await checkWorkspaceProjectDirectory\(project\)\)\) return;/);
-  assertInOrder(handler, [
-    "handleSelectConversation(conversationId)",
-    "return;",
-    "checkWorkspaceProjectDirectory(project)",
-    "if (workspaceConversationSelectionSeqRef.current !== selectionSeq) return;",
-    "pendingWorkspaceConversationRef.current = {",
-    "activateWorkspaceProject(project)",
-  ]);
-
-  const pendingEffect = between(
-    chatPageSource,
-    "  useEffect(() => {\n    const pending = pendingWorkspaceConversationRef.current;",
-    "  const sidebarRunningConversationIds",
-  );
-  assert.match(pendingEffect, /!targetProject/);
-  assert.match(pendingEffect, /archivedWorkspaceProjectPathKeys\.has\(pending\.targetPathKey\)/);
-  assert.match(pendingEffect, /!sidebarStore\.peek\(pending\.conversationId\)/);
-  assertInOrder(pendingEffect, [
-    "workspaceProjectPathKey(activeWorkspaceProjectPath) !== pending.targetPathKey",
-    "historyScopeKey !== pending.targetScopeKey",
-    "handleSelectConversation(pending.conversationId)",
-  ]);
+  assert.match(workspaceSource, /cancelPendingWorkspaceConversationActionRef/);
+  assert.match(chatPageSource, /onSelectConversation=\{\(id\) => \{/);
+  assert.match(chatPageSource, /handleSelectConversation\(id\)/);
+  assert.match(chatPageSource, /onSelectProject=\{handleSelectWorkspaceProject\}/);
 });
 
 test("desktop workspace collapse intent is persisted by normalized project path", () => {

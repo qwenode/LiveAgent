@@ -1,0 +1,84 @@
+d2e1ba0e2a4401cd1dd4173c2a84e13c83e2c7ba	2026-07-28	fix: keep sidebar visible with workspace editor
+1ac98a20ed5f1a3019b8b58b06c454d9aa707f2a	2026-07-28	feat(skills): add reusable skill presets
+554db08a06a91fdd9914b51649ade943ca608a57	2026-07-28	fix(webui): mirror automation skill fields
+a5bc702f0a0da2519da65e9aed4ab7131d46e44b	2026-07-29	fix(skills): address preset review feedback
+65be156a4971db05b132f873ae0c5f6470b55fe3	2026-07-29	Merge origin/main into feat/skill-presets
+85c6ecac01b0022a96adf00371ddad20e99895bc	2026-07-29	refactor(skills): separate default and custom presets
+21ea9295eed4ff54957fe921db49e82aee2bd59a	2026-07-29	Merge origin/main into feat/skill-presets
+099fe8b6576b694681ba0386f363215adcc2671a	2026-07-29	refactor(skills): configure chat presets via slash command
+b229271adcfe9d38c4d0b1aa01bed8a17454a07a	2026-07-29	fix(聊天): 修复提问工具启动竞态
+5f4bfe1e23d8eeca9e67e3b29f1360f9be37b63b	2026-07-29	style(聊天): 修正提问卡片格式
+2fea3b0fbee26da66ef829e144bae992b44f631e	2026-07-30	Merge remote-tracking branch 'origin/main' into feat/skill-presets
+5a2c3b5c20ad2eff5034191b21dbdfb3599b28b0	2026-07-30	test(skills): support readonly navigator globals
+3de56be2a05480580569cb7e0e91fe05e5a8c685	2026-07-30	fix(聊天): 提问卡截止时间容忍远端时钟偏移
+50fa57cfc0685af0b595198de3a920cbbd6d4028	2026-07-30	chore(github): add issue/PR templates and PR governance workflow
+82b366f2baa313d20901f2b3eb7e272b7f184def	2026-07-30	Merge pull request #327 from AlphaCatMeow/codex/fix-ask-user-question-race
+88e7c5daf31d249453c3a39dd0e50c35219b223f	2026-07-30	Merge remote-tracking branch 'upstream/main' into chore/github-governance-upstream
+c321e1b4ffe633587317a22340c509dd54e4f38b	2026-07-30	Merge remote-tracking branch 'origin/main' into feat/skill-presets
+a32199b3c42a50bbd274b422633315fd977eeba4	2026-07-30	Merge remote-tracking branch 'origin/main' into feat/skill-presets
+a031706406dc189c69db1bf146a54c2cc04c1c59	2026-07-31	fix(github): convert PR to draft via optional PAT and make governance report truthful
+2163d11654d057e4ba76cd88a8fabf3bc759a7e0	2026-07-31	chore(github): add stale workflow to close inactive issues and PRs
+849daf269762846557cc8243c5fe6e7fb155ed72	2026-07-31	Merge pull request #340 from yyg-max/chore/github-governance-stale
+da6adf522734906b5de789c05d3a6a83e847e7f2	2026-07-31	chore(github): push daily chart SVGs to chart-assets branch instead of main
+254251ac068fc7f8176a3bff54b031911402370f	2026-08-01	fix(github): call draft conversion with PAT via direct fetch, octokit overrides auth header
+7de95a20bf93cfe026a57f6367c453e74a50acef	2026-07-31	Merge pull request #347 from yyg-max/main
+2c007744251ae4c6e207258d6de0bc32463eb6c9	2026-07-31	Merge branch 'Stack-Cairn:main' into chore/chart-assets-branch
+0f95b836c3ea928365185835154981a9c2be9a82	2026-07-31	feat: remove built-in CLI identity user-agent
+5a560fc9e1e3ed070040655f0bf66c56fcf3baaa	2026-08-02	fix(deepseek): map max thinking level to max instead of high
+5c7ee615db0a972f63d286afcb04e5601addf2f9	2026-08-02	Merge pull request #341 from yyg-max/chore/chart-assets-branch
+39fa0bd6ff66adcb7ee05fe541eeb726f1f9bbfc	2026-08-02	test(deepseek): add regression for reasoning=max -> reasoning_effort=max
+870fc67b1b46811aa54a0a9c847a6c27a217722b	2026-08-02	ci: apply frontend formatting fixes
+96558114065df8c809eeb1616f3779c80da48e3b	2026-08-02	fix(composer): cover text leak below input card with background
+a145a6e36a523223bb8a63d7a276d64302ebae79	2026-08-03	Update API relay service information in README
+97c22b205eca2e540ac3cb128ebf2bcde20de3a1	2026-08-03	Merge pull request #368 from FlowerRealm/patch-1
+b051e96828373f4d6a111cfd619b29bf629539ee	2026-08-03	chore: verify PR CI trigger
+4a96669a7b3fec00395532f591b2fae9fbc21ef4	2026-08-04	fix(providers): respect requestFormat for DeepSeek models
+41946bdc1feff20d1500efb67eb79e3a8e51c9c3	2026-08-04	feat(skills): support AGENTS global skills import
+99d7a92e177faf23b628f009a3bd0ade6916571f	2026-08-04	Merge pull request #363 from FlowerRealm/realm/fix-composer-text-leak
+dc40553c1d612729067ccbaf597c3b0e4cad7a7a	2026-08-03	docs: correct LLM tech-stack deps in README
+c86f410610bd7054d303028b910db73696d54b57	2026-08-04	test(providers): remove stale DeepSeek request-format tests
+66c26bc59d3875172b9bb71d6d0571e0173e581b	2026-08-04	Merge pull request #351 from FlowerRealm/realm/remove-builtin-user-agent
+dcc97adb69de00c028ac62dad073f23f9c0f9268	2026-08-04	Merge pull request #373 from FlowerRealm/worktree-fix+readme-fake-sdk-deps
+5e22b73f959a4a729355f1c3f72fde9074388b7e	2026-08-04	Merge pull request #312 from Mieluoxxx/fix/304-editor-sidebar-overlay
+38150e51547c3a3694d377a4d1b589a15dd032b6	2026-08-04	Merge pull request #372 from ISO-N/feat/skills-hub-agents-import
+4ed3ea1c244aaf74123e9c18f708e70695e63f3a	2026-08-04	Merge pull request #370 from ISO-N/fix/deepseek-responses-request-format
+de40155723a0419b5df88cde13db3563d98b685a	2026-08-04	Merge remote-tracking branch 'origin/main' into fix/deepseek-max-reasoning-effort
+00a2c6fc43754f40022b0703459824559bee73ea	2026-08-04	Merge pull request #360 from xiaYuTian11/fix/deepseek-max-reasoning-effort
+dd5eb56bac0a8e9d81bebe0f17ded120ce4544f4	2026-08-01	fix(chat): preserve pasted user message newlines
+f5d7b9a5c56efd3f98947a96777830cad2b9e1db	2026-08-01	docs(chat): record paste newline handoff
+8d74b7c779f85f6dabe546f7eb5f2da52b104178	2026-08-01	style(chat): satisfy frontend format checks
+889ba72444d1def6b2d324bccaeaae99a5207d7e	2026-07-31	fix(gateway): recover compacted chat ingress gaps
+c63a2c22e7215650925156ace8f795b2634d6406	2026-07-31	feat(chat): 添加当前会话任务进度指示器
+fb7ec206279bcc7c278830d03cb923e4bb8b66d1	2026-08-08	Merge pull request #353 from AlphaCatMeow/codex/fix-paste-newline-serialization
+e2b90aab387884969202c27bd57605f4c4aa1db1	2026-08-08	fix(chat): prevent task progress and queue overlap
+27a2d928e426788fc5aaf8b21e3bff9dc9dcea75	2026-08-08	Merge pull request #345 from AlphaCatMeow/codex/feat-task-progress-indicator-stacked
+fc60ad7794be17a5215e3f4c738dcd530f58d98b	2026-08-08	Merge pull request #350 from AlphaCatMeow/codex/fix-live-transcript-jitter
+df998bbd59a5b5fff5544f4091fa4dfa818f5410	2026-08-08	fix: reduce IME composition end Enter tail window from 80ms to 20ms (#387)
+14e83701c799b562c8f800a7b170029b2c789735	2026-08-08	feat(sidebar): distinct styling for pinned workspaces and conversations
+ef25c9d85b2edf43de4455925f64680ac530d08e	2026-08-08	Merge pull request #395 from Stack-Cairn/feat/sidebar-pinned-styling
+8f24e73c296d58a64e48bd1984f262ffef3a09ad	2026-08-09	feat(providers): cc-switch 式供应商自动故障转移（同厂商同模型） (#385)
+97c6a4c9ac3a90803a682bf035c732f8253d490b	2026-08-09	feat(mcp-hub): MCP 配置增加描述与文档链接附加信息 (#378)
+de67b729b83d63730749c411d16f9857de6715a7	2026-08-09	fix(composer): preserve structured tags across copy/cut/paste (#398)
+ddf12d202995235ba680ceb9e26d6be2617493cc	2026-08-09	fix(mcp-hub): address metadata review feedback
+809bbf27c5b9b7a865ee4e242fbb33c7195c07c6	2026-08-09	Merge pull request #400 from Stack-Cairn/feat/mcp-additional-info
+b00f8357831943533fb5c7488a8773050ed41b65	2026-08-09	refactor(ui): 统一 GUI 与 WebUI 共享界面 (#399)
+6ed79340996e7b61c085f8452e6d62dd9f820411	2026-08-09	feat(workspace): configure Skills and MCP per workspace
+5089772c78b48d5d079c34fac73bdfb2caaeff73	2026-08-09	fix(i18n): 补齐共享界面翻译键
+12e28f80dff9c01a97d5358510653b3c3cfa7513	2026-08-09	Merge remote-tracking branch 'origin/main' into feat/skill-presets
+95a243d401588d6539bb33e80137369448718f1f	2026-08-09	docs(i18n): 添加 Skills Hub 修复预览
+a2f3525af916f30f54d235f49ad6cef2e8c9f01a	2026-08-09	Merge pull request #401 from Stack-Cairn/fix/shared-i18n-parity
+cc514b72016269cfeb51c50ba59ac588ba2d5032	2026-08-09	fix(chat): restore transcript scrolling and thinking collapse
+1006152b012aa503cf9a5d14904076164b09a102	2026-08-09	fix(workspace): 支持打开 skills 目录下的 skill:// 文件
+c3434f94e9a503b3620c5a6bf00cae3345b0fa2d	2026-08-09	Merge pull request #406 from Stack-Cairn/fix/chat-transcript-scroll-thinking-collapse
+158e3fac5e1faacfffeec6c8ea0866db373b8b97	2026-08-09	Merge pull request #407 from Stack-Cairn/fix/skill-path-file-card-open
+a86749352ba43904b45edd65119f6dc150a6bd24	2026-08-09	feat(settings): 优化系统设置界面并引入共享 Switch 组件 (#394)
+a2ee9f99eeb42051a3021156271a5ba0e0570000	2026-08-09	Merge pull request #317 from NotToday1024/feat/skill-presets
+f373aa8a017444559f6b28e892096e71d5ecb3fa	2026-08-09	ci(models): 改为定时刷新模型目录 (#411)
+c59b9ca40494b08c8b33aa78fdbff487eea35763	2026-08-09	fix(webui): 修复桌面设置同步页 Logo 显示
+d5a27420633390aa53b72c0fade011f69ad8be4b	2026-08-09	Merge pull request #412 from Stack-Cairn/fix/webui-settings-sync-logo
+ecfb038aaac7a0e4f5e8fcba8216952814d266bd	2026-08-09	fix(test): align save_system_persists_project_setting_rows with workspace resource settings (#414)
+c1bfe47c6998b9eab7b824dda51a87b3fc149852	2026-08-09	feat(chat): move conversations to another workspace (single & batch) (#356)
+2883e09af2dbb4040cea00c3854f327a4c2f7cba	2026-08-10	feat(agent): make task lists durable across compaction
+d09fed795a496e3ef2a716c80a89b482f065a15b	2026-08-10	chore(models): refresh model catalog (#417)
+e93ab1c5baf600c68bde77846e453efc8d2abed6	2026-08-10	refactor(ui): share task progress across GUI and WebUI
+38f818753cbaf5403033276fbb9567f61d54d90e	2026-08-10	Merge pull request #416 from Stack-Cairn/refactor/stable-task-list

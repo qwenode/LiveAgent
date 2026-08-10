@@ -167,6 +167,7 @@ async function executeCronPromptRun(
     throw new Error(`Auto Prompt provider API key is empty: ${providerLabel}`);
   }
 
+  const workspaceResources = resolveWorkspaceResources(settings, workdir);
   const skillsContext = await buildCronSkillsContext(settings, request, workdir);
   const activeAgentPrompt = getActiveAgentPrompt(settings);
   const runtimePlatform = await resolveRuntimePlatform();
@@ -183,7 +184,7 @@ async function executeCronPromptRun(
       customProviderId: request.providerId,
       model: request.model,
     },
-    getMcpSettings: () => filterMcpSettingsForWorkspace(settings.mcp, resolveWorkspaceResources(settings, workdir)),
+    getMcpSettings: () => filterMcpSettingsForWorkspace(settings.mcp, workspaceResources),
     mcpLoadFailureMode: "throw",
   });
 

@@ -165,6 +165,11 @@ test("Auto Prompt run prefers the queue-time workdir with a global fallback", ()
     runnerSource,
     /const workdir = \(request\.workdir \?\? ""\)\.trim\(\) \|\| settings\.system\.workdir\.trim\(\)/,
   );
+  assert.match(runnerSource, /resolveWorkspaceResources\(settings, workdir\)/);
+  assert.match(
+    runnerSource,
+    /filterMcpSettingsForWorkspace\(settings\.mcp, workspaceResources\)/,
+  );
 });
 
 test("Cron workspace pin stays wired in shared UI", () => {
@@ -204,16 +209,14 @@ test("Cron workspace pin stays wired in shared UI", () => {
 });
 
 test("Cron Skills preset selectors render names instead of internal ids", () => {
-  for (const source of [guiCronModalSource, webCronModalSource]) {
-    assert.match(
-      source,
-      /skillPresets\.find\(\(preset\) => preset\.id === value\)\?\.name/,
-    );
-    assert.match(
-      source,
-      /resolveSkillPreset\(\{ presets: skillPresets \}, skillPresetId\)\.name/,
-    );
-  }
+  assert.match(
+    cronModalSource,
+    /skillPresets\.find\(\(preset\) => preset\.id === value\)\?\.name/,
+  );
+  assert.match(
+    cronModalSource,
+    /resolveSkillPreset\(\{ presets: skillPresets \}, skillPresetId\)\.name/,
+  );
 });
 
 test("CronTaskManager create pins the agent's current workspace by default", () => {
