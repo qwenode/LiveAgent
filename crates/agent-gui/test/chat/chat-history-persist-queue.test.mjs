@@ -141,6 +141,38 @@ const seg1Grown = segment(1, {
 const stateWithAppendedSegment = buildState([seg0, seg1Initial], 1);
 const stateWithGrownActiveSegment = buildState([seg0, seg1Grown], 1);
 
+test("append transition includes the previous active segment with unflushed messages", async () => {
+  const recorder = createInvokeRecorder();
+  const chatHistory = loadChatHistory(recorder.invoke);
+  const persistedSeg0 = segment(0, { messageCount: 1, endMessageId: "m-1" });
+  const grownSeg0 = segment(0, {
+    messageCount: 4,
+    endMessageId: "m-4",
+    updatedAt: 204,
+  });
+  const nextSeg1 = segment(1, { messageCount: 1, endMessageId: "m-5", updatedAt: 205 });
+  const cursorRef = { current: persistenceCursor(persistedSeg0) };
+
+  const task = chatHistory.persistConversationRuntime(
+    persistParams({
+      cursorRef,
+      state: buildState([grownSeg0, nextSeg1], 1),
+    }),
+  );
+  await flush();
+
+  assert.equal(recorder.calls.length, 1);
+  assert.equal(recorder.calls[0].cmd, "chat_history_append_segment");
+  assert.equal(recorder.calls[0].args.input.previousSegment.segmentId, "seg-0");
+  assert.equal(recorder.calls[0].args.input.previousSegment.messageCount, 4);
+  assert.equal(recorder.calls[0].args.input.segment.segmentId, "seg-1");
+  assert.equal(recorder.calls[0].args.input.conversation.totalMessageCount, 5);
+
+  await resolveCall(recorder.calls[0], "conv-1", 9);
+  await task;
+  assert.deepEqual(cursorRef.current, persistenceCursor(nextSeg1));
+});
+
 test("queued persists read the latest persistence cursor inside the conversation lock", async () => {
   const recorder = createInvokeRecorder();
   const chatHistory = loadChatHistory(recorder.invoke);

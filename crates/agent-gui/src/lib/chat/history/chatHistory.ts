@@ -188,6 +188,10 @@ type ChatHistorySegmentMutationInput = {
   segment: ChatHistorySegmentWireRecord;
 };
 
+type ChatHistoryAppendSegmentInput = ChatHistorySegmentMutationInput & {
+  previousSegment: ChatHistorySegmentWireRecord;
+};
+
 function normalizeStoredSummaryMessage(parsed: unknown): StoredSummaryMessage {
   if (
     !parsed ||
@@ -450,7 +454,7 @@ async function upsertChatHistoryActiveSegmentRaw(input: ChatHistorySegmentMutati
   return invoke<ChatHistorySummary>("chat_history_upsert_active_segment", { input });
 }
 
-async function appendChatHistorySegmentRaw(input: ChatHistorySegmentMutationInput) {
+async function appendChatHistorySegmentRaw(input: ChatHistoryAppendSegmentInput) {
   return invoke<ChatHistorySummary>("chat_history_append_segment", { input });
 }
 
@@ -548,8 +552,17 @@ async function writeConversationRuntime(
   }
 
   if (activeSegment.segmentIndex === cursor.activeSegmentIndex + 1) {
+    const previousSegment = state.segments.find(
+      (segment) =>
+        segment.segmentIndex === cursor.activeSegmentIndex &&
+        segment.segmentId === cursor.activeSegmentId,
+    );
+    if (!previousSegment) {
+      throw new Error("追加历史分段时缺少前一活跃分段");
+    }
     return appendChatHistorySegmentRaw({
       conversation,
+      previousSegment: buildChatHistorySegmentInput(previousSegment),
       segment: buildChatHistorySegmentInput(activeSegment),
     });
   }
