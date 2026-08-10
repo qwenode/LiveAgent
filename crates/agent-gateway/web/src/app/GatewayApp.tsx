@@ -8,7 +8,6 @@ import { type NotifyItem, NotifyToast } from "@liveagent/ui/components/chat/Noti
 import { SharedHistoryManagerModal } from "@liveagent/ui/components/chat/SharedHistoryManagerModal";
 import { TaskProgressBar } from "@liveagent/ui/components/chat/TaskProgressBar";
 import { ToolApprovalBar } from "@liveagent/ui/components/chat/ToolApprovalBar";
-import { WorkspaceResourceSettingsDrawer } from "@liveagent/ui/components/chat/WorkspaceResourceSettingsDrawer";
 import type {
   GitCommitContextPayload,
   GitFileContextPayload,
