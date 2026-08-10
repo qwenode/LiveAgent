@@ -4,7 +4,7 @@ import test from "node:test";
 
 const readSource = (url) => readFileSync(url, "utf8").replaceAll("\r\n", "\n");
 const sidebarSource = readSource(
-  new URL("../src/components/chat/ChatHistorySidebar.tsx", import.meta.url),
+  new URL("../../../agent-ui/src/components/chat/ChatHistorySidebar.tsx", import.meta.url),
 );
 const containerSource = readSource(
   new URL("../src/app/sidebar/GatewaySidebarContainer.tsx", import.meta.url),
@@ -103,7 +103,8 @@ test("web Agent mode renders workspace feeds while non-Agent mode keeps the rece
   assert.match(sidebarSource, /if \(!showProjects\) return items;/);
   assert.match(sidebarSource, /if \(projectsCollapsed\) return \[\];/);
   assert.match(sidebarSource, /workspaceFeeds\.get\(pathKey\)/);
-  assert.match(sidebarSource, /renderedProjects\.map\(renderWorkspaceProject\)/);
+  assert.match(sidebarSource, /renderedProjects\.map\(\(project, projectIndex\) =>/);
+  assert.match(sidebarSource, /\{renderWorkspaceProject\(project\)\}/);
   assert.match(sidebarSource, /const historyVirtualizer = useVirtualizer\(/);
   assert.match(sidebarSource, /virtualHistoryRows\.map\(\(virtualRow\) =>/);
   assert.match(
@@ -124,7 +125,7 @@ test("web Agent mode renders workspace feeds while non-Agent mode keeps the rece
     "return;",
     "handleLoadMore();",
   ]);
-  assert.match(appSource, /showProjects=\{isAgentMode\}/);
+  assert.match(appSource, /showProjects=\{isAgentMode && status\?\.online === true\}/);
   assert.match(appSource, /collapsedWorkspaceProjectPaths=/);
   assert.match(appSource, /onWorkspaceProjectCollapsedChange=/);
 });

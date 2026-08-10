@@ -297,6 +297,7 @@ export function ChatPage(props: ChatPageProps) {
     projectRenameDraft,
     setProjectRenameDraft,
     activateWorkspaceProject,
+    checkWorkspaceProjectDirectory,
     handleSelectWorkspaceProject,
     handleNewConversationForProject,
     handleBrowseWorkspaceProjectInFileTree,
@@ -1543,6 +1544,26 @@ export function ChatPage(props: ChatPageProps) {
     [openController],
   );
 
+  const handleSelectProjectConversation = useCallback(
+    async (project: WorkspaceProject, id: string) => {
+      const conversationId = id.trim();
+      if (!conversationId) return;
+      const targetPathKey = workspaceProjectPathKey(project.path);
+      if (!targetPathKey) return;
+      if (workspaceProjectPathKey(activeWorkspaceProjectPath) !== targetPathKey) {
+        if (!(await checkWorkspaceProjectDirectory(project))) return;
+        activateWorkspaceProject(project);
+      }
+      handleSelectConversation(conversationId);
+    },
+    [
+      activateWorkspaceProject,
+      activeWorkspaceProjectPath,
+      checkWorkspaceProjectDirectory,
+      handleSelectConversation,
+    ],
+  );
+
   // 托盘/快捷键动作参数的 ref 镜像：监听 effect 是 []-dep，闭包内一律
   // 经 ref 取最新值（handleSelectWorkspaceProject 等依赖 settings，不稳定）。
   const sidebarRunningConversationIds = useSidebarSelector(
@@ -1895,6 +1916,10 @@ export function ChatPage(props: ChatPageProps) {
           onSelectConversation={(id) => {
             setActiveView("chat");
             handleSelectConversation(id);
+          }}
+          onSelectProjectConversation={(project, id) => {
+            setActiveView("chat");
+            void handleSelectProjectConversation(project, id);
           }}
           onConversationDeleted={handleConversationDeleted}
           onConversationCwdChanged={handleConversationCwdChanged}

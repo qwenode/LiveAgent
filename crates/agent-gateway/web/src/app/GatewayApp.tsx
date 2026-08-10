@@ -172,6 +172,7 @@ import {
   createConversationOpenController,
 } from "@liveagent/ui/lib/sidebar/openController";
 import { sortSidebarConversations } from "@liveagent/ui/lib/sidebar/reconcile";
+import { sidebarScopeKey } from "@liveagent/ui/lib/sidebar/scope";
 import { createSidebarStore } from "@liveagent/ui/lib/sidebar/store";
 import { useSidebarSelector } from "@liveagent/ui/lib/sidebar/useSidebarSelector";
 import {
@@ -390,7 +391,28 @@ export default function GatewayApp() {
     [transcriptFollow],
   );
   const composerRef = useRef<MentionComposerHandle | null>(null);
+  const focusComposerAfterConversationChange = useCallback(() => {
+    if (isMobileSidebarLayout()) {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        composerRef.current?.focus();
+      });
+    });
+  }, []);
   const composerDraftCacheRef = useRef<Map<string, MentionComposerDraft>>(new Map());
+  const workspaceConversationSelectionSeqRef = useRef(0);
+  const pendingWorkspaceConversationRef = useRef<{
+    conversationId: string;
+    targetPathKey: string;
+    targetScopeKey: string;
+  } | null>(null);
+  const cancelPendingWorkspaceConversation = useCallback(() => {
+    workspaceConversationSelectionSeqRef.current += 1;
+    pendingWorkspaceConversationRef.current = null;
+  }, []);
+
   const composerDraftOwnerRef = useRef("");
   const conversationIdRef = useRef(conversationId);
   const selectedHistoryIdRef = useRef(selectedHistoryId);
@@ -559,6 +581,19 @@ export default function GatewayApp() {
     }
   }, [activeWorkspaceProject?.id, activeWorkspaceProjectId]);
   const activeWorkspaceProjectPath = activeWorkspaceProject?.path.trim() ?? "";
+
+  // Scope key for pending cross-workspace conversation selection.
+  const historyScopeKey = useMemo(
+    () =>
+      sidebarScopeKey(
+        isAgentMode
+          ? activeWorkspaceProjectPath
+            ? { kind: "workdir", cwd: activeWorkspaceProjectPath }
+            : { kind: "none" }
+          : { kind: "unscoped" },
+      ),
+    [activeWorkspaceProjectPath, isAgentMode],
+  );
 
   // Scope derivation: agent mode with a project → that workdir; agent mode
   // without a project → "none" (resolves to an empty list locally, no wire
@@ -1264,9 +1299,10 @@ export default function GatewayApp() {
           workdir: targetProject.path,
           preserveCurrentComposerDraft: true,
         });
+        focusComposerAfterConversationChange();
       }
     },
-    [setSettings, workspaceProjects],
+    [focusComposerAfterConversationChange, setSettings, workspaceProjects],
   );
 
   const handleSelectWorkspaceProject = useCallback(
@@ -1563,6 +1599,29 @@ export default function GatewayApp() {
           },
         }),
       );
+    },
+    [setSettings],
+  );
+
+  const handleSidebarWorkspaceProjectCollapsedChange = useCallback(
+    (project: WorkspaceProject, collapsed: boolean) => {
+      const pathKey = workspaceProjectPathKey(project.path);
+      if (!pathKey) return;
+      setSettings((prev) => {
+        const current = prev.customSettings.chatSidebar.collapsedWorkspaceProjectPaths;
+        const collapsedWorkspaceProjectPaths = collapsed
+          ? current.includes(pathKey)
+            ? current
+            : [...current, pathKey]
+          : current.filter((item) => item !== pathKey);
+        if (collapsedWorkspaceProjectPaths === current) return prev;
+        return updateCustomSettings(prev, {
+          chatSidebar: {
+            ...prev.customSettings.chatSidebar,
+            collapsedWorkspaceProjectPaths,
+          },
+        });
+      });
     },
     [setSettings],
   );
@@ -3078,6 +3137,7 @@ export default function GatewayApp() {
   );
 
   function handleSidebarNewConversation() {
+    cancelPendingWorkspaceConversation();
     if (isMobileSidebarLayout()) {
       setSidebarOpen(false);
     }
@@ -3087,12 +3147,14 @@ export default function GatewayApp() {
       activeView !== "chat" &&
       (visibleConversationId === "" || isLocalDraftConversationId(visibleConversationId))
     ) {
+      focusComposerAfterConversationChange();
       return;
     }
     startNewConversation({
       workdir: isAgentMode ? activeWorkspaceProjectPath || undefined : undefined,
       preserveCurrentComposerDraft: true,
     });
+    focusComposerAfterConversationChange();
   }
 
   function handleSidebarSelectConversation(id: string) {
@@ -3138,6 +3200,67 @@ export default function GatewayApp() {
     openController.open(targetConversationId);
     restoreCachedComposerDraft(targetConversationId);
   }
+
+  const handleSidebarSelectConversationRef = useRef(handleSidebarSelectConversation);
+  handleSidebarSelectConversationRef.current = handleSidebarSelectConversation;
+
+  async function handleSidebarSelectWorkspaceConversation(
+    project: WorkspaceProject,
+    id: string,
+  ) {
+    const conversationId = id.trim();
+    const targetPathKey = workspaceProjectPathKey(project.path);
+    if (!conversationId || !targetPathKey) return;
+    if (isMobileSidebarLayout()) {
+      setSidebarOpen(false);
+    }
+    setActiveView("chat");
+    if (workspaceProjectPathKey(activeWorkspaceProjectPath) === targetPathKey) {
+      handleSidebarSelectConversation(conversationId);
+      return;
+    }
+    const selectionSeq = workspaceConversationSelectionSeqRef.current + 1;
+    workspaceConversationSelectionSeqRef.current = selectionSeq;
+    pendingWorkspaceConversationRef.current = null;
+    if (!(await checkWorkspaceProjectDirectory(project))) return;
+    if (workspaceConversationSelectionSeqRef.current !== selectionSeq) return;
+    pendingWorkspaceConversationRef.current = {
+      conversationId,
+      targetPathKey,
+      targetScopeKey: sidebarScopeKey({ kind: "workdir", cwd: project.path }),
+    };
+    activateWorkspaceProject(project);
+  }
+
+  useEffect(() => {
+    const pending = pendingWorkspaceConversationRef.current;
+    if (!pending) return;
+    const targetProject = workspaceProjects.find(
+      (project) => workspaceProjectPathKey(project.path) === pending.targetPathKey,
+    );
+    if (
+      !targetProject ||
+      archivedWorkspaceProjectPathKeys.has(pending.targetPathKey) ||
+      !sidebarConversationsById.has(pending.conversationId)
+    ) {
+      pendingWorkspaceConversationRef.current = null;
+      return;
+    }
+    if (
+      workspaceProjectPathKey(activeWorkspaceProjectPath) !== pending.targetPathKey ||
+      historyScopeKey !== pending.targetScopeKey
+    ) {
+      return;
+    }
+    pendingWorkspaceConversationRef.current = null;
+    handleSidebarSelectConversationRef.current(pending.conversationId);
+  }, [
+    activeWorkspaceProjectPath,
+    archivedWorkspaceProjectPathKeys,
+    historyScopeKey,
+    sidebarConversationsById,
+    workspaceProjects,
+  ]);
 
   // Conversations that left the authoritative sidebar index (remote deletes,
   // confirmed local deletes, reconcile drops): clean per-conversation caches
@@ -4688,6 +4811,9 @@ export default function GatewayApp() {
               projectRenameDraft={projectRenameDraft}
               projectsCollapsed={settings.customSettings.chatSidebar.projectsCollapsed}
               recentCollapsed={settings.customSettings.chatSidebar.recentCollapsed}
+              collapsedWorkspaceProjectPaths={
+                settings.customSettings.chatSidebar.collapsedWorkspaceProjectPaths
+              }
               canShareConversations={canShareHistory}
               sharedConversationCount={sharedHistoryItems.length}
               externalErrorMessage={sidebarActionError}
@@ -4696,6 +4822,9 @@ export default function GatewayApp() {
               isLocalDraftConversationId={isLocalDraftConversationId}
               onProjectsCollapsedChange={handleSidebarProjectsCollapsedChange}
               onRecentCollapsedChange={handleSidebarRecentCollapsedChange}
+              onWorkspaceProjectCollapsedChange={
+                handleSidebarWorkspaceProjectCollapsedChange
+              }
               onCreateProject={handleOpenCreateWorkspaceProject}
               onSelectProject={handleSelectWorkspaceProject}
               onNewConversationForProject={handleNewConversationForProject}
@@ -4712,6 +4841,7 @@ export default function GatewayApp() {
               archivedProjectPathKeys={archivedWorkspaceProjectPathKeys}
               onNewConversation={handleSidebarNewConversation}
               onSelectConversation={handleSidebarSelectConversation}
+              onSelectProjectConversation={handleSidebarSelectWorkspaceConversation}
               onShareConversation={handleOpenShareModal}
               onOpenSharedConversations={handleOpenSharedHistoryManager}
               onLocalDraftDeleted={handleSidebarLocalDraftDeleted}

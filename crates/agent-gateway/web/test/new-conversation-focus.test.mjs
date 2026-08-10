@@ -5,7 +5,7 @@ import test from "node:test";
 const gatewayAppSource = readFileSync(
   new URL("../src/app/GatewayApp.tsx", import.meta.url),
   "utf8",
-);
+).replaceAll("\r\n", "\n");
 
 function between(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);

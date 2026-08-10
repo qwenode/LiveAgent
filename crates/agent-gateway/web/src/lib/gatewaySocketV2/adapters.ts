@@ -578,6 +578,15 @@ function agentRequestPayload(type: string, body: J): GatewayEnvelope["payload"] 
           conversationId: trimStr(body.conversation_id),
         }),
       };
+    case "history.skills":
+      return {
+        case: "historySkills",
+        value: create(HistorySkillsRequestSchema, {
+          conversationId: trimStr(body.conversation_id),
+          skillPresetId: trimStr(body.skill_preset_id),
+          skillsDisabled: bool(body.skills_disabled),
+        }),
+      };
     case "providers.list":
       return { case: "providerList", value: create(ProviderListRequestSchema, {}) };
     case "provider.models":

@@ -302,3 +302,40 @@
 - CRLF-normalize source reads in edit-resend / mention / focus tests (Windows autocrlf).
 - Replaced obsolete `SkillPresetManager` interaction suite (component removed) with a presence guard.
 - Validation: `pnpm --filter liveagent test:frontend` **1538/1538 pass**; settings/i18n/skills/sidebar combined still green.
+
+## Post-#399 wiring closeout (2026-08-10 cont. 3)
+
+Closed remaining post-`#399` / workspace Skills-MCP port gaps that left Gateway/Chat sidebar conversation selection incomplete.
+
+### Fixes
+
+1. **GatewayApp cross-workspace conversation open** — restored historical pending-seq pipeline:
+   - `pendingWorkspaceConversationRef` + `workspaceConversationSelectionSeqRef`
+   - `handleSidebarSelectWorkspaceConversation` (same path → select; else validate dir → pending → `activateWorkspaceProject`)
+   - effect waits for `activeWorkspaceProjectPath` + `historyScopeKey` + conversation in `sidebarConversationsById`, then opens via `handleSidebarSelectConversationRef`
+2. **GatewayApp `historyScopeKey`** — derived with `sidebarScopeKey` from agent/workdir/none/unscoped (same shape as `setScope`).
+3. **GatewayApp collapse wiring** — re-added `handleSidebarWorkspaceProjectCollapsedChange` and passed `collapsedWorkspaceProjectPaths` / `onWorkspaceProjectCollapsedChange` into `GatewaySidebarContainer` (required props after local workspace-feed customs).
+4. **GatewayApp focus** — `focusComposerAfterConversationChange` (double rAF, skip mobile) on activate/new conversation paths (from prior segment; kept).
+5. **adapters `history.skills`** — socket adapter case for skill-preset history RPC parity.
+6. **ChatPage** — destructure `checkWorkspaceProjectDirectory`; `handleSelectProjectConversation` validates dir → activate → select; wire `onSelectProjectConversation`.
+7. **Web tests** — CRLF normalize; shared `agent-ui` sidebar path; `showProjects` assert keeps **local** online guard (`isAgentMode && status?.online === true`); cross-workspace pending markers match ref-based open.
+
+### Validation
+
+- `crates/agent-gateway/web`: `new-conversation-focus` + `workspace-sidebar-wiring` — **9/9 pass**
+- `crates/agent-gui`: `workspace-sidebar-wiring` + `new-conversation-focus` — **10/10 pass**
+- `crates/agent-gui`: `test/settings/*.test.mjs` — **232/232 pass** (includes automation-prompt-runner + provider-usage + workspace-resource)
+
+### Local customs preserved
+
+- Web `showProjects={isAgentMode && status?.online === true}` (not bare `isAgentMode`)
+- Sidebar workspace feeds / visible-project pagination / collapse-by-path
+- Workspace resources default **inherit** (global skills presets + global MCP until custom/off)
+- Skill-presets hybrid on send/cron inherit path
+
+### Residual
+
+- Full gateway/web typecheck matrix not re-run this segment
+- `request-options` reasoning_effort case-count audit still open from earlier notes
+- No push / no PR / no merge to main
+
