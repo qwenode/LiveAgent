@@ -116,6 +116,80 @@ mod tests {
     }
 
     #[test]
+    fn append_segment_persists_unflushed_previous_active_messages_atomically() {
+        let mut conn = open_test_db().expect("open test db");
+        let mut initial = sample_conversation();
+        initial.total_message_count = 1;
+        upsert_chat_history_header(&conn, &initial).expect("upsert initial header");
+        upsert_single_segment(
+            &conn,
+            &initial.id,
+            &ChatHistorySegmentInput {
+                segment_index: 0,
+                segment_id: "segment-0".to_string(),
+                summary_json: None,
+                messages_json: r#"[{"id":"m-1","role":"user","content":"start","timestamp":1}]"#
+                    .to_string(),
+                message_count: 1,
+                start_message_id: Some("m-1".to_string()),
+                end_message_id: Some("m-1".to_string()),
+                created_at: 1,
+                updated_at: 1,
+            },
+        )
+        .expect("upsert initial segment");
+
+        let mut conversation = initial.clone();
+        conversation.active_segment_index = 1;
+        conversation.total_segment_count = 2;
+        conversation.total_message_count = 4;
+        conversation.updated_at = 4;
+        let input = ChatHistoryAppendSegmentInput {
+            conversation,
+            previous_segment: ChatHistorySegmentInput {
+                segment_index: 0,
+                segment_id: "segment-0".to_string(),
+                summary_json: None,
+                messages_json: r#"[
+                    {"id":"m-1","role":"user","content":"start","timestamp":1},
+                    {"id":"m-2","role":"assistant","content":[],"timestamp":2},
+                    {"id":"m-3","role":"toolResult","toolCallId":"t-1","toolName":"Read","content":[],"isError":false,"timestamp":3}
+                ]"#
+                .to_string(),
+                message_count: 3,
+                start_message_id: Some("m-1".to_string()),
+                end_message_id: Some("m-3".to_string()),
+                created_at: 1,
+                updated_at: 3,
+            },
+            segment: ChatHistorySegmentInput {
+                segment_index: 1,
+                segment_id: "segment-1".to_string(),
+                summary_json: Some(r#"{"role":"summary","id":"summary-1"}"#.to_string()),
+                messages_json:
+                    r#"[{"id":"m-4","role":"user","content":"continue","timestamp":4}]"#
+                        .to_string(),
+                message_count: 1,
+                start_message_id: Some("m-4".to_string()),
+                end_message_id: Some("m-4".to_string()),
+                created_at: 4,
+                updated_at: 4,
+            },
+        };
+
+        let summary = append_chat_history_segment_sync(&mut conn, &input)
+            .expect("append segment with updated previous active segment");
+
+        assert_eq!(summary.message_count, 4);
+        let segments = load_segments(&conn, &initial.id).expect("load appended segments");
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].message_count, 3);
+        assert!(segments[0].messages_json.contains("m-3"));
+        assert_eq!(segments[1].message_count, 1);
+        verify_chat_history_consistency(&conn, &initial.id).expect("appended history consistency");
+    }
+
+    #[test]
     fn initialize_db_migrates_legacy_pin_columns() {
         let conn =
             Connection::open_in_memory().expect("open legacy in-memory chat history database");

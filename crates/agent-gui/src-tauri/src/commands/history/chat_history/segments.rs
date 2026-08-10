@@ -105,9 +105,22 @@ fn validate_segment_mutation_input(input: &ChatHistorySegmentMutationInput) -> R
     Ok(())
 }
 
+fn validate_append_segment_input(input: &ChatHistoryAppendSegmentInput) -> Result<(), String> {
+    validate_conversation_input(&input.conversation)?;
+    validate_segment_input(&input.previous_segment)?;
+    validate_segment_input(&input.segment)?;
+    if input.segment.segment_index != input.conversation.active_segment_index {
+        return Err("segmentIndex 必须等于 activeSegmentIndex".to_string());
+    }
+    if input.previous_segment.segment_index + 1 != input.segment.segment_index {
+        return Err("previousSegment 必须紧邻新增 segment".to_string());
+    }
+    Ok(())
+}
+
 fn validate_append_segment_preconditions(
     conn: &Connection,
-    input: &ChatHistorySegmentMutationInput,
+    input: &ChatHistoryAppendSegmentInput,
 ) -> Result<(), String> {
     let conversation_id = input.conversation.id.trim();
     let existing_header = conn
@@ -138,6 +151,12 @@ fn validate_append_segment_preconditions(
     if active_segment_index != total_segment_count - 1 {
         return Err("append segment 前置校验失败：现有 activeSegmentIndex 非最后一段".to_string());
     }
+    if input.previous_segment.segment_index != active_segment_index {
+        return Err(format!(
+            "append segment 前置校验失败：previousSegmentIndex 应为 {}，实际为 {}",
+            active_segment_index, input.previous_segment.segment_index
+        ));
+    }
     if input.segment.segment_index != total_segment_count {
         return Err(format!(
             "append segment 只能追加到末尾：期望 segmentIndex={}，实际为 {}",
@@ -156,6 +175,28 @@ fn validate_append_segment_preconditions(
             total_segment_count + 1,
             input.conversation.total_segment_count
         ));
+    }
+
+    let existing_previous_segment_id = conn
+        .query_row(
+            "
+            SELECT segment_id
+            FROM chatHistorySegment
+            WHERE conversation_id = ?1 AND segment_index = ?2
+            ",
+            params![conversation_id, input.previous_segment.segment_index],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| format!("检查 append segment 前一分段失败：{e}"))?;
+    match existing_previous_segment_id {
+        Some(segment_id) if segment_id == input.previous_segment.segment_id.trim() => {}
+        Some(_) => {
+            return Err("append segment 前置校验失败：previousSegment 身份不匹配".to_string());
+        }
+        None => {
+            return Err("append segment 前置校验失败：previousSegment 不存在".to_string());
+        }
     }
 
     let existing_segment = conn
