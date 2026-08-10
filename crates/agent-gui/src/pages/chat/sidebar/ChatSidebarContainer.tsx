@@ -30,9 +30,6 @@ import {
   DesktopSidebarUpdate,
   hideDesktopSidebarCloseButton,
 } from "../../../agent-ui-adapters/sidebarChrome";
-import type { AppUpdateController } from "../../../lib/appUpdates";
-import { normalizeConversationTitle } from "../../../lib/chat/page/chatPageHelpers";
-import type { WorkspaceProject } from "../../../lib/settings";
 import {
   moveConversationsToWorkspace,
   moveConversationToWorkspace,
@@ -196,6 +193,7 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
 
   const handleCommitRename = () => {
     const id = renamingId;
+    const title = normalizeConversationTitle(renameDraft);
     setRenamingId(null);
     setRenameDraft("");
     if (!id) {

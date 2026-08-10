@@ -27,6 +27,12 @@ export default defineConfig(async () => ({
   define: {
     __LIVEAGENT_APP_VERSION__: JSON.stringify(appVersion),
   },
+  build: {
+    // Monaco workers and the on-demand syntax/diagram renderers are intentionally
+    // large local-app assets. Keep the warning useful for unexpected growth above
+    // the current heaviest generated worker instead of flagging known lazy chunks.
+    chunkSizeWarningLimit: 7000,
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

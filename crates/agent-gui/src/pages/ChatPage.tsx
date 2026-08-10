@@ -38,7 +38,6 @@ import {
 } from "@liveagent/ui/lib/sidebar/selectors";
 import { createSidebarStore } from "@liveagent/ui/lib/sidebar/store";
 import { useSidebarSelector } from "@liveagent/ui/lib/sidebar/useSidebarSelector";
-import { mergeAlwaysEnabledSkillNames } from "@liveagent/ui/lib/skills/index";
 import { terminalSessionBelongsToProject } from "@liveagent/ui/lib/terminal/sessionStore";
 import type { LocalTunnelClient } from "@liveagent/ui/lib/tunnels/constants";
 import { listen } from "@tauri-apps/api/event";
@@ -317,6 +316,7 @@ export function ChatPage(props: ChatPageProps) {
     handleSetWorkspaceProjectPinned,
     handleSidebarProjectsCollapsedChange,
     handleSidebarRecentCollapsedChange,
+    handleSidebarWorkspaceProjectCollapsedChange,
   } = useWorkspaceProjects({
     settings,
     setSettings,
@@ -1488,7 +1488,6 @@ export function ChatPage(props: ChatPageProps) {
     availableSkills,
     skillsRootDir,
     refreshSkills,
-    selectedSkillNames,
     activeAgentPrompt,
     ensureTunnelToolTab,
     ensureSshTunnelToolTab,
@@ -1888,8 +1887,12 @@ export function ChatPage(props: ChatPageProps) {
           projectRenameDraft={projectRenameDraft}
           projectsCollapsed={settings.customSettings.chatSidebar.projectsCollapsed}
           recentCollapsed={settings.customSettings.chatSidebar.recentCollapsed}
+          collapsedWorkspaceProjectPaths={
+            settings.customSettings.chatSidebar.collapsedWorkspaceProjectPaths
+          }
           onProjectsCollapsedChange={handleSidebarProjectsCollapsedChange}
           onRecentCollapsedChange={handleSidebarRecentCollapsedChange}
+          onWorkspaceProjectCollapsedChange={handleSidebarWorkspaceProjectCollapsedChange}
           onCreateProject={handleOpenCreateWorkspaceProject}
           onSelectProject={handleSelectWorkspaceProject}
           onNewConversationForProject={handleNewConversationForProject}
