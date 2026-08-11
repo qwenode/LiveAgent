@@ -310,9 +310,13 @@ export async function buildBuiltinToolRegistry(
     ...parentBundles,
     ...chatBundles,
     createSubagentTools({
+      selectedModel: subagentRuntime.selectedModel,
+      label: subagentRuntime.label,
       providerId: subagentRuntime.providerId,
       model: subagentRuntime.model,
       runtime: subagentRuntime.runtime,
+      getParentRuntime: subagentRuntime.getParentRuntime,
+      fastRuntime: subagentRuntime.fastRuntime,
       runtimePlatform: params.runtimePlatform,
       workdir: params.workdir,
       resolveHomeDir,

@@ -47,6 +47,7 @@ import {
 } from "../../../lib/chat/messages/uiMessages";
 import {
   type AgentRunnerFailoverParams,
+  type AgentRunnerFailoverSwitchEvent,
   runAssistantWithTools,
 } from "../../../lib/chat/runner/agentRunner";
 import type { StreamDebugLogger } from "../../../lib/debug/agentDebug";
@@ -68,6 +69,7 @@ import {
   renderMessageBusSnapshot,
   SUBAGENT_PARENT_ID,
   type SubagentConversationStore,
+  type SubagentModelRuntime,
   type SubagentTemplate,
 } from "../../../lib/subagents";
 import { buildBuiltinToolRegistry } from "../../../lib/tools/builtinRegistry";
@@ -209,6 +211,7 @@ export type RunAgentConversationTurnParams = {
   providerId: ProviderId;
   model: string;
   runtime: ProviderRuntimeConfig;
+  subagentFastRuntime?: SubagentModelRuntime;
   failover?: AgentRunnerFailoverParams;
   runtimeModel: RuntimeModel;
   selectedModel: {
@@ -285,6 +288,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     providerId,
     model,
     runtime,
+    subagentFastRuntime,
     runtimeModel,
     selectedModel,
     effectiveWorkdir,
@@ -412,6 +416,32 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
   const fileState = createFileToolState();
   const subagentScheduler = createSubagentScheduler();
   const runtimePlatform = await resolveRuntimePlatform();
+  const primaryParentRuntime: SubagentModelRuntime = {
+    selectedModel,
+    label: params.failover?.primary.label ?? `${providerId} · ${model}`,
+    providerId,
+    model,
+    runtime,
+  };
+  let activeParentRuntime = primaryParentRuntime;
+  const failover = params.failover;
+  const turnFailover: AgentRunnerFailoverParams | undefined = failover
+    ? {
+        ...failover,
+        onSwitched: (event: AgentRunnerFailoverSwitchEvent) => {
+          activeParentRuntime = event.target
+            ? {
+                selectedModel: event.target.selectedModel,
+                label: event.target.label,
+                providerId: event.target.providerId,
+                model: event.target.model,
+                runtime: event.target.runtime,
+              }
+            : primaryParentRuntime;
+          failover.onSwitched?.(event);
+        },
+      }
+    : undefined;
   const buildRegistryStartedAt = perfNowMs();
   const builtinRegistry = await buildBuiltinToolRegistry({
     workdir: effectiveWorkdir,
@@ -443,9 +473,13 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     },
     subagentRuntime: subagentStore
       ? {
+          selectedModel,
+          label: primaryParentRuntime.label,
           providerId,
           model,
           runtime,
+          getParentRuntime: () => activeParentRuntime,
+          fastRuntime: subagentFastRuntime,
           sessionId,
           templates: enabledSubagentTemplates(agentTemplates),
           store: subagentStore,
@@ -758,7 +792,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
         providerId,
         model,
         runtime,
-        failover: params.failover,
+        failover: turnFailover,
         runtimePlatform,
         context: agentContext,
         workdir: effectiveWorkdir,

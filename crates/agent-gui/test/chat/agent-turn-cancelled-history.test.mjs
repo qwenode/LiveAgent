@@ -106,6 +106,7 @@ async function replayCancelledHistoryScenario(params) {
 }
 
 let runAssistantWithToolsScenario = replayCancelledHistoryScenario;
+let capturedBuiltinRegistryParams;
 
 const loader = createTsModuleLoader({
   mocks: {
@@ -118,7 +119,8 @@ const loader = createTsModuleLoader({
       },
     },
     [builtinRegistryPath]: {
-      async buildBuiltinToolRegistry() {
+      async buildBuiltinToolRegistry(params) {
+        capturedBuiltinRegistryParams = params;
         return {
           tools: [],
           async executeToolCall() {
@@ -417,4 +419,148 @@ test("AskUserQuestion becomes visible only when execution starts while ordinary 
   assert.equal(protectionChecks, 0);
   assert.equal(toolCallEvents("AskUserQuestion").length, 1);
   assert.equal(askTools.getAskUserQuestionDeadlineAt(askToolCall.id), askDeadlineAt);
+});
+
+test("same-turn failover updates the parent runtime exposed to Agent batches", async () => {
+  const primaryRuntime = { baseUrl: "https://primary.example.test/v1", apiKey: "primary-key" };
+  const fallbackRuntime = { baseUrl: "https://fallback.example.test/v1", apiKey: "fallback-key" };
+  const fallbackTarget = {
+    selectedModel: { customProviderId: "fallback-provider", model: "gpt-5-fallback" },
+    providerId: "codex",
+    model: "gpt-5-fallback",
+    label: "Fallback · gpt-5-fallback",
+    runtime: fallbackRuntime,
+  };
+  const callbackSnapshots = [];
+  const state = conversationState.createConversationStateFromContext({
+    systemPrompt: "",
+    messages: [],
+  });
+  const subagentStore = {
+    conversationId: "conversation-failover",
+    async ready() {},
+    listIdentities() {
+      return [];
+    },
+    latestRunsByAgent() {
+      return new Map();
+    },
+    async listBusMessages() {
+      return [];
+    },
+  };
+
+  runAssistantWithToolsScenario = async (params) => {
+    assert.ok(params.failover);
+    assert.ok(capturedBuiltinRegistryParams.subagentRuntime);
+    params.failover.onSwitched({ target: fallbackTarget, round: 1, errorMessage: "primary failed" });
+    assert.deepEqual(capturedBuiltinRegistryParams.subagentRuntime.getParentRuntime(), {
+      selectedModel: fallbackTarget.selectedModel,
+      label: fallbackTarget.label,
+      providerId: "codex",
+      model: "gpt-5-fallback",
+      runtime: fallbackRuntime,
+    });
+    params.failover.onSwitched({ target: null, round: 2, errorMessage: "fallback failed" });
+    assert.deepEqual(capturedBuiltinRegistryParams.subagentRuntime.getParentRuntime(), {
+      selectedModel: { customProviderId: "primary-provider", model: "gpt-5" },
+      label: "Primary · gpt-5",
+      providerId: "codex",
+      model: "gpt-5",
+      runtime: primaryRuntime,
+    });
+    params.onTurnStart?.(1);
+    params.onAssistantMessage?.(abortedAssistant, 1);
+    return {
+      assistant: abortedAssistant,
+      messages: [abortedAssistant],
+      emittedMessages: [abortedAssistant],
+    };
+  };
+
+  try {
+    await runAgentConversationTurn({
+      providerId: "codex",
+      model: "gpt-5",
+      runtime: primaryRuntime,
+      failover: {
+        config: { maxSwitches: 2, failureThreshold: 3, cooldownSeconds: 60 },
+        primary: {
+          selectedModel: { customProviderId: "primary-provider", model: "gpt-5" },
+          label: "Primary · gpt-5",
+        },
+        fallbacks: [fallbackTarget],
+        onSwitched(event) {
+          callbackSnapshots.push({
+            target: event.target?.model ?? null,
+            runtime: capturedBuiltinRegistryParams.subagentRuntime.getParentRuntime(),
+          });
+        },
+      },
+      runtimeModel: {
+        provider: "codex",
+        api: "openai-responses",
+        id: "gpt-5",
+      },
+      selectedModel: { customProviderId: "primary-provider", model: "gpt-5" },
+      effectiveWorkdir: "C:/workspace",
+      effectiveSkillsEnabled: false,
+      showSilentMemoryExtraction: false,
+      skillsPrompt: "",
+      agentTemplates: [],
+      getMcpSettings: () => ({ servers: [], selected: [] }),
+      sessionId: "session-1",
+      taskStateStore: { runId: "run-1", getState: () => undefined, commitState: async () => {} },
+      conversationId: "conversation-failover",
+      fallbackTitle: "title",
+      createdAt: 1,
+      titlePromise: null,
+      transcriptStore: {},
+      gatewayBridgeEvents: {
+        queueToken: noOp,
+        queueEvent: noOp,
+        queueToolStatus: noOp,
+      },
+      hookLifecycle: createHookLifecycle(),
+      conversationDebugLogger: { enabled: false, logResult: noOp },
+      subagentStore,
+      getNextConversationState: () => state,
+      applyConversationState: noOp,
+      buildPreparedContext: () => ({ systemPrompt: "", messages: [] }),
+      compaction: {
+        async maybeCompactPreSend() {},
+        beginRequest: noOp,
+        shouldProtectMidStream: () => false,
+        async compactDuringRun() {
+          return { context: null, shouldDisableProtection: false };
+        },
+      },
+      cancellation: {
+        deriveScope() {
+          return { controller: new AbortController(), release: noOp };
+        },
+      },
+      resetLiveTranscript: noOp,
+      settleLiveTranscript: noOp,
+      batchLiveRoundsUpdate: noOp,
+      updateToolStatus: noOp,
+      updateRetryAttempts: noOp,
+      updatePersistableAgentProgress: noOp,
+      commitVisibleAbortedConversation: () => true,
+      freezeGatewayFinalProjection: noOp,
+      async persistConversationWithHistorySync() {
+        return true;
+      },
+    });
+  } finally {
+    runAssistantWithToolsScenario = replayCancelledHistoryScenario;
+  }
+
+  assert.deepEqual(
+    callbackSnapshots.map((item) => [item.target, item.runtime.model]),
+    [
+      ["gpt-5-fallback", "gpt-5-fallback"],
+      [null, "gpt-5"],
+    ],
+  );
 });

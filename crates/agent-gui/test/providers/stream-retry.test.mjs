@@ -92,6 +92,36 @@ function createAbortedDoneStream() {
   };
 }
 
+function createDoneOnlyStream(content, stopReason = "stop") {
+  const assistant = createAssistant(undefined, stopReason, { content });
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { type: "start", partial: { ...assistant, content: [] } };
+      yield { type: "done", message: assistant };
+    },
+    async result() {
+      return assistant;
+    },
+  };
+}
+
+function createWhitespaceOnlyStream() {
+  const assistant = createAssistant(undefined, "stop", {
+    content: [{ type: "text", text: "  \n" }],
+  });
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { type: "start", partial: { ...assistant, content: [] } };
+      yield { type: "text_delta", contentIndex: 0, delta: "  \n", partial: assistant };
+      yield { type: "text_end", contentIndex: 0, content: "  \n", partial: assistant };
+      yield { type: "done", message: assistant };
+    },
+    async result() {
+      return assistant;
+    },
+  };
+}
+
 async function collectEvents(eventStream) {
   const events = [];
   for await (const event of eventStream) events.push(event);
@@ -118,6 +148,102 @@ test("withStreamRetry succeeds after N retryable errors without leaking failed-a
   const final = await wrapped.result();
   assert.equal(final.stopReason, "stop");
   assert.equal(final.content[0].text, "final answer");
+});
+
+test("withStreamRetry retries an OpenAI Responses stream that ends without a terminal event", async () => {
+  let calls = 0;
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      if (calls === 1) {
+        return createErrorStream(
+          "OpenAI Responses stream ended before a terminal response event",
+        );
+      }
+      return createSuccessStream("recovered answer");
+    },
+    { maxAttempts: 2 },
+  );
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 2);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["start", "text_delta", "done"],
+  );
+  const final = await wrapped.result();
+  assert.equal(final.stopReason, "stop");
+  assert.equal(final.content[0].text, "recovered answer");
+});
+
+test("withStreamRetry retries a clean empty response before content commits", async () => {
+  let calls = 0;
+  const retryErrorMessages = [];
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      if (calls === 1) return createDoneOnlyStream([]);
+      return createSuccessStream("recovered from empty response");
+    },
+    {
+      maxAttempts: 2,
+      onRetry: (_attempt, _maxAttempts, errorMessage) => retryErrorMessages.push(errorMessage),
+    },
+  );
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 2);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["start", "text_delta", "done"],
+  );
+  assert.deepEqual(retryErrorMessages, ["Upstream returned an empty response"]);
+  const final = await wrapped.result();
+  assert.equal(final.stopReason, "stop");
+  assert.equal(final.content[0].text, "recovered from empty response");
+});
+
+test("withStreamRetry turns repeated clean empty responses into an explicit failure", async () => {
+  let calls = 0;
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      return createWhitespaceOnlyStream();
+    },
+    { maxAttempts: 3 },
+  );
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 3);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["error"],
+  );
+  const final = await wrapped.result();
+  assert.equal(final.stopReason, "error");
+  assert.equal(final.errorMessage, "Upstream returned an empty response");
+});
+
+test("withStreamRetry accepts a clean done carrying a tool call even without delta events", async () => {
+  let calls = 0;
+  const toolCall = { type: "toolCall", id: "call_1", name: "Read", arguments: { path: "." } };
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      return createDoneOnlyStream([toolCall], "toolUse");
+    },
+    { maxAttempts: 3 },
+  );
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 1);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["start", "done"],
+  );
+  const final = await wrapped.result();
+  assert.equal(final.stopReason, "toolUse");
+  assert.deepEqual(final.content, [toolCall]);
 });
 
 test("withStreamRetry invokes onRetry per attempt and onRetryRecovered once content commits", async () => {

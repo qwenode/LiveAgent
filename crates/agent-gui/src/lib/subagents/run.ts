@@ -1,5 +1,8 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
-import type { SubagentReportDetails } from "@liveagent/ui/lib/subagents/protocol";
+import type {
+  SubagentCardLiveState,
+  SubagentReportDetails,
+} from "@liveagent/ui/lib/subagents/protocol";
 import { CompactionController } from "../chat/compaction/controller";
 import {
   appendMessagesToConversation,
@@ -8,11 +11,15 @@ import {
   createConversationStateFromContext,
 } from "../chat/conversation/conversationState";
 import { createTurnCancellationFromSignal } from "../chat/conversation/turnCancellation";
-import { runAssistantWithTools } from "../chat/runner/agentRunner";
+import {
+  type AgentRunnerFailoverParams,
+  type AgentRunnerFailoverSwitchEvent,
+  runAssistantWithTools,
+} from "../chat/runner/agentRunner";
 import { appendSystemPrompt } from "../providers/runtime/common";
 import type { ProviderRuntimeConfig } from "../providers/runtime/types";
 import type { RuntimePlatform } from "../runtimePlatform";
-import type { ProviderId } from "../settings";
+import type { ProviderId, SelectedModel } from "../settings";
 import { renderMessageBusSnapshot } from "./bus";
 import { toolErrorResult } from "./errors";
 import type { SubagentWorktreeIpc } from "./ipc/worktree";
@@ -46,10 +53,22 @@ import {
 
 type ChildToolExecutor = (toolCall: ToolCall, signal?: AbortSignal) => Promise<ToolResultMessage>;
 
-export type SubagentRunEnvironment = {
+type SubagentModelRuntime = {
+  selectedModel: SelectedModel;
+  label: string;
   providerId: ProviderId;
   model: string;
   runtime: ProviderRuntimeConfig;
+};
+
+const FAST_MODEL_FAILOVER_CONFIG = {
+  maxSwitches: 1,
+  failureThreshold: 1,
+  cooldownSeconds: 3600,
+} as const;
+
+export type SubagentRunEnvironment = SubagentModelRuntime & {
+  fallbackRuntime?: SubagentModelRuntime;
   runtimePlatform?: RuntimePlatform;
   workdir: string;
   sessionId?: string;
@@ -78,6 +97,7 @@ export type SubagentRunRequest = {
   index: number;
   total: number;
   signal?: AbortSignal;
+  onProgress?: (progress: SubagentCardLiveState) => void;
 };
 
 export function buildSubagentRunId(parentToolCallId: string, agentId: string, index: number) {
@@ -168,6 +188,35 @@ export async function executeSubagentRun(
   let candidateArtifacts: string[] | undefined;
   let changedPaths: string[] | undefined;
   let childWorkdir = env.workdir;
+  const primaryModelRuntime: SubagentModelRuntime = {
+    selectedModel: env.selectedModel,
+    label: env.label,
+    providerId: env.providerId,
+    model: env.model,
+    runtime: env.runtime,
+  };
+  let activeModelRuntime = primaryModelRuntime;
+
+  let lastProgressPhase: SubagentCardLiveState["phase"] | undefined;
+  let lastProgressAt = 0;
+  const publishProgress = (
+    progress: Pick<SubagentCardLiveState, "phase"> &
+      Partial<Pick<SubagentCardLiveState, "activeTool">>,
+    force = false,
+  ) => {
+    if (!request.onProgress) return;
+    const now = Date.now();
+    if (!force && progress.phase === lastProgressPhase && now - lastProgressAt < 750) return;
+    lastProgressPhase = progress.phase;
+    lastProgressAt = now;
+    request.onProgress({
+      phase: progress.phase,
+      round: rounds > 0 ? rounds : undefined,
+      toolCalls,
+      activeTool: progress.activeTool,
+      lastActivityAt: now,
+    });
+  };
 
   const persistenceWarnings: string[] = [];
   const trackedPersists: Promise<void>[] = [];
@@ -192,8 +241,8 @@ export async function executeSubagentRun(
       prompt: spec.prompt,
       mode: spec.mode,
       status,
-      providerId: env.providerId,
-      model: env.model,
+      providerId: activeModelRuntime.providerId,
+      model: activeModelRuntime.model,
       sessionId: subagentSessionId,
       workdir: childWorkdir,
       worktreeRoot: worktree?.worktreeRoot,
@@ -241,6 +290,7 @@ export async function executeSubagentRun(
     name: identity.name,
     role: identity.role,
     prompt: spec.prompt,
+    taskType: spec.taskType,
     templateId: spec.templateId,
     mode: spec.mode,
     applyPolicy: spec.mode === "worktree" ? spec.applyPolicy : undefined,
@@ -312,6 +362,7 @@ export async function executeSubagentRun(
   };
 
   const settleWorktree = async (terminal: "completed" | "failed" | "cancelled") => {
+    publishProgress({ phase: "settling" }, true);
     if (!worktree) return;
     env.onStatus?.(`Inspecting worktree changes for ${identity.name}…`);
     await fetchWorktreeStatus();
@@ -401,6 +452,7 @@ export async function executeSubagentRun(
   };
 
   // ---- provision: persist identity ----------------------------------------
+  publishProgress({ phase: "starting" }, true);
   if (persistenceEnabled && identityNeedsPersist) {
     try {
       identity = await env.store.upsertIdentity(identity);
@@ -482,9 +534,9 @@ export async function executeSubagentRun(
       composeAppliedState: (state: ConversationViewState) => ConversationViewState;
     }) => {
       compaction.bindTurn({
-        providerId: env.providerId,
-        model: env.model,
-        runtime: env.runtime,
+        providerId: activeModelRuntime.providerId,
+        model: activeModelRuntime.model,
+        runtime: activeModelRuntime.runtime,
         cancellation: compactionCancellation,
         sinks: {
           applyState: (state) => {
@@ -567,10 +619,35 @@ export async function executeSubagentRun(
     schedulePersist("running", baseState);
 
     // ---- execute ------------------------------------------------------------
+    const fallbackRuntime = env.fallbackRuntime;
+    const modelFailover: AgentRunnerFailoverParams | undefined = fallbackRuntime
+      ? {
+          config: FAST_MODEL_FAILOVER_CONFIG,
+          primary: {
+            selectedModel: primaryModelRuntime.selectedModel,
+            label: primaryModelRuntime.label,
+          },
+          fallbacks: [fallbackRuntime],
+          onSwitched: (event: AgentRunnerFailoverSwitchEvent) => {
+            activeModelRuntime = event.target
+              ? {
+                  selectedModel: event.target.selectedModel,
+                  label: event.target.label,
+                  providerId: event.target.providerId,
+                  model: event.target.model,
+                  runtime: event.target.runtime,
+                }
+              : primaryModelRuntime;
+            bindCompactionTurn();
+          },
+        }
+      : undefined;
+    publishProgress({ phase: "model" }, true);
     const result = await runAssistantWithTools({
-      providerId: env.providerId,
-      model: env.model,
-      runtime: env.runtime,
+      providerId: primaryModelRuntime.providerId,
+      model: primaryModelRuntime.model,
+      runtime: primaryModelRuntime.runtime,
+      failover: modelFailover,
       runtimePlatform: env.runtimePlatform,
       context: buildRequestContext(baseState),
       workdir: childWorkdir,
@@ -591,10 +668,20 @@ export async function executeSubagentRun(
       },
       onTurnStart: (round) => {
         rounds = Math.max(rounds, round);
+        publishProgress({ phase: "model" }, true);
       },
-      onTextDelta: () => {},
-      onToolExecutionStart: () => {
+      onTextDelta: () => {
+        publishProgress({ phase: "responding" });
+      },
+      onThinkingDelta: () => {
+        publishProgress({ phase: "responding" });
+      },
+      onToolExecutionStart: (childToolCall) => {
         toolCalls += 1;
+        publishProgress({ phase: "tool", activeTool: childToolCall.name }, true);
+      },
+      onToolResult: () => {
+        publishProgress({ phase: "model" }, true);
       },
       onBeforeNextTurn: async ({ emittedMessages }) => {
         const view = appendMessagesToConversation(baseState, emittedMessages);

@@ -26,6 +26,32 @@ export function resolveMemorySummaryModelSelection(
   };
 }
 
+export function resolveSubagentFastModelSelection(
+  settings: AppSettings,
+): EffectiveChatModelSelection | null {
+  const fastModel = settings.customSettings.subagentFastModel;
+  if (!fastModel) {
+    return null;
+  }
+
+  const provider = settings.customProviders.find((item) => item.id === fastModel.customProviderId);
+  if (
+    !provider ||
+    !provider.activeModels.includes(fastModel.model) ||
+    !provider.baseUrl.trim() ||
+    !provider.apiKey.trim()
+  ) {
+    return null;
+  }
+
+  return {
+    selectedModel: fastModel,
+    provider,
+    providerId: provider.type,
+    model: fastModel.model,
+  };
+}
+
 export function resolveConversationTitleModelSelection(
   settings: AppSettings,
   fallback: EffectiveChatModelSelection,

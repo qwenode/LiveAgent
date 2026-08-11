@@ -77,6 +77,42 @@ function primarySelection(providerId, model) {
   };
 }
 
+test("subagent Fast model selection resolves exactly and unavailable configs fall back", () => {
+  const appSettings = settings.normalizeSettings({
+    customProviders: PROVIDERS,
+    customSettings: {
+      subagentFastModel: { customProviderId: "provider-a2", model: "model-1" },
+    },
+  });
+  const resolved = runtimeConfig.resolveSubagentFastModelSelection(appSettings);
+  assert.equal(resolved.provider.id, "provider-a2");
+  assert.equal(resolved.providerId, "claude_code");
+  assert.equal(resolved.model, "model-1");
+
+  const missingProvider = {
+    ...appSettings,
+    customSettings: {
+      ...appSettings.customSettings,
+      subagentFastModel: { customProviderId: "missing", model: "model-1" },
+    },
+  };
+  assert.equal(runtimeConfig.resolveSubagentFastModelSelection(missingProvider), null);
+
+  for (const providerPatch of [
+    { activeModels: [] },
+    { apiKey: "" },
+    { baseUrl: "" },
+  ]) {
+    const unavailable = {
+      ...appSettings,
+      customProviders: appSettings.customProviders.map((provider) =>
+        provider.id === "provider-a2" ? { ...provider, ...providerPatch } : provider,
+      ),
+    };
+    assert.equal(runtimeConfig.resolveSubagentFastModelSelection(unavailable), null);
+  }
+});
+
 test("fallbacks reuse the conversation's model on the queued provider", () => {
   const appSettings = buildSettings(["provider-a2", "provider-a3"]);
   const plan = runtimeConfig.buildModelFailoverPlan(

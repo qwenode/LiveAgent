@@ -1,12 +1,13 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import type {
   SubagentBatchDetails,
+  SubagentCardLiveState,
   SubagentReportDetails,
 } from "@liveagent/ui/lib/subagents/protocol";
 import { Type } from "typebox";
 import type { ProviderRuntimeConfig } from "../providers/runtime/types";
 import type { RuntimePlatform } from "../runtimePlatform";
-import type { ProviderId } from "../settings";
+import type { ProviderId, SelectedModel } from "../settings";
 import {
   type BuiltinToolBundle,
   type BuiltinToolExecutionContext,
@@ -14,7 +15,12 @@ import {
   createBuiltinMetadataMap,
 } from "../tools/builtinTypes";
 import { ToolPathResolver } from "../tools/pathUtils";
-import { buildSubagentCardResult, buildSubagentCardToolCall, renderBatchResultText } from "./cards";
+import {
+  buildSubagentCardResult,
+  buildSubagentCardToolCall,
+  renderBatchResultText,
+  withSubagentCardLiveState,
+} from "./cards";
 import {
   buildRejectedBatchDetails,
   issue,
@@ -44,6 +50,8 @@ import {
 import { createSequentialQueue, normalizeErrorMessage, runWithConcurrency } from "./utils";
 import { parseSubagentBatch, type ResolvedSubagentSpec } from "./validate";
 
+const DEFAULT_SUBAGENT_STALL_WARNING_MS = 45_000;
+
 const AGENT_PARAMETERS = Type.Object(
   {
     agents: Type.Array(
@@ -60,6 +68,12 @@ const AGENT_PARAMETERS = Type.Object(
             description:
               "Task for this run. For an existing id this is normally the only field needed besides id.",
           }),
+          task_type: Type.Optional(
+            Type.Union([Type.Literal("search"), Type.Literal("synthesis")], {
+              description:
+                "Optional per-job lightweight routing hint. search is for focused lookup or exploration; synthesis is for combining or summarizing existing findings. These use the configured Fast model when available. Omit for implementation, architecture, risky actions, or context-heavy reasoning. This field is not inherited when an agent is resumed.",
+            }),
+          ),
           name: Type.Optional(
             Type.String({ description: "Display name. Only valid when the id is first created." }),
           ),
@@ -179,10 +193,17 @@ async function resolveOutputPaths(params: {
  * is the conversation's single source of truth (its conversationId doubles as
  * the parent conversation id); the scheduler is the turn's single scheduler.
  */
-export type SubagentRuntimeConfig = {
+export type SubagentModelRuntime = {
+  selectedModel: SelectedModel;
+  label: string;
   providerId: ProviderId;
   model: string;
   runtime: ProviderRuntimeConfig;
+};
+
+export type SubagentRuntimeConfig = SubagentModelRuntime & {
+  getParentRuntime?: () => SubagentModelRuntime;
+  fastRuntime?: SubagentModelRuntime;
   sessionId?: string;
   templates: SubagentTemplate[];
   store: SubagentConversationStore;
@@ -191,9 +212,13 @@ export type SubagentRuntimeConfig = {
 };
 
 export function createSubagentTools(params: {
+  selectedModel: SelectedModel;
+  label: string;
   providerId: ProviderId;
   model: string;
   runtime: ProviderRuntimeConfig;
+  getParentRuntime?: () => SubagentModelRuntime;
+  fastRuntime?: SubagentModelRuntime;
   runtimePlatform?: RuntimePlatform;
   workdir: string;
   resolveHomeDir?: () => Promise<string>;
@@ -207,24 +232,30 @@ export function createSubagentTools(params: {
   metadataByName: Map<string, BuiltinToolMetadata>;
   createSubagentToolRegistry?: (workdir: string) => Promise<SubagentToolRegistry>;
   worktreeIpc?: SubagentWorktreeIpc;
+  /** Test/diagnostic override; production defaults to a conservative warning delay. */
+  stallWarningMs?: number;
 }): BuiltinToolBundle {
   const store = params.store;
   const templates = params.templates;
   const messageBusEnabled = Boolean(store.conversationId);
   const worktreeIpc = params.worktreeIpc ?? tauriSubagentWorktreeIpc;
+  const stallWarningMs =
+    typeof params.stallWarningMs === "number" && Number.isFinite(params.stallWarningMs)
+      ? Math.max(1, Math.floor(params.stallWarningMs))
+      : DEFAULT_SUBAGENT_STALL_WARNING_MS;
   const readonlyTools = selectReadOnlyTools({
     tools: params.baseTools,
     metadataByName: params.metadataByName,
   });
   const enqueueWorktreeApply = createSequentialQueue();
   const agentRunQueues = new Map<string, ReturnType<typeof createSequentialQueue>>();
-  const enqueueAgentRun = <T>(agentId: string, run: () => Promise<T>) => {
+  const enqueueAgentRun = <T>(agentId: string, run: () => Promise<T>, signal?: AbortSignal) => {
     let enqueue = agentRunQueues.get(agentId);
     if (!enqueue) {
       enqueue = createSequentialQueue();
       agentRunQueues.set(agentId, enqueue);
     }
-    return enqueue(run);
+    return enqueue(run, signal);
   };
 
   // The roster/template blocks below reflect store state at registry-build
@@ -240,6 +271,8 @@ export function createSubagentTools(params: {
       "Each agent has a stable `id` inside this conversation. Reuse the same id to resume that agent's private context; use a new id only for a genuinely new persona.",
       "Creation fields (name, role, identity, template) apply only when an id is first created; sending different values for an existing id is an error. For an existing id, send only id and the new prompt.",
       "mode=readonly (default for new agents) gives inspect-only tools — use it for research, review, and discussion. mode=worktree gives file+shell tools inside an isolated git worktree — use it only when file changes are expected or explicitly requested. A resumed agent keeps its previous mode unless you set mode.",
+      "Set task_type=search for focused lookup, code navigation, documentation/log investigation, or simple verification. Set task_type=synthesis for summarizing, comparing, or organizing findings already available to the subagent. These jobs use the configured Fast model when available.",
+      "Omit task_type for implementation, architecture, risky or high-stakes decisions, and work that needs deep continuity with the parent context. task_type is per run and must be specified again on resume; when omitted or when the Fast model is unavailable, the subagent uses the current chat model.",
       "apply_policy controls merge-back from a worktree: none (default) never applies, auto applies the patch automatically, explicit applies only when every changed file matches allowed_output_paths.",
       "retain_worktree=true keeps a safely-cleanable worktree for review. Worktrees with unapplied changes or failed agents are always retained.",
       "Subagents cannot call Agent recursively. Worktree mode must not modify global LiveAgent settings, MCP server configuration, cron tasks, or user-level skills.",
@@ -304,11 +337,16 @@ export function createSubagentTools(params: {
     const concurrency = parsed.batch.concurrency;
     const scheduler = context?.subagentScheduler ?? params.scheduler;
     const startedAt = Date.now();
-
-    const env: SubagentRunEnvironment = {
+    const parentRuntime = params.getParentRuntime?.() ?? {
+      selectedModel: params.selectedModel,
+      label: params.label,
       providerId: params.providerId,
       model: params.model,
       runtime: params.runtime,
+    };
+
+    const env: SubagentRunEnvironment = {
+      ...parentRuntime,
       runtimePlatform: params.runtimePlatform,
       workdir: params.workdir,
       sessionId: params.sessionId,
@@ -355,17 +393,68 @@ export function createSubagentTools(params: {
             template: resolved.template,
             now: Date.now(),
           });
-        const cardToolCall = buildSubagentCardToolCall({
-          parentToolCallId: toolCall.id,
-          spec: resolved.spec,
-          identity: identityPreview,
-          index,
-          total: agents.length,
-          concurrency,
-        });
+        const shouldUseFastRuntime =
+          resolved.spec.taskType === "search" || resolved.spec.taskType === "synthesis";
+        const fastRuntime = shouldUseFastRuntime ? params.fastRuntime : undefined;
+        const fastMatchesParent =
+          !fastRuntime ||
+          (fastRuntime.selectedModel.customProviderId ===
+            parentRuntime.selectedModel.customProviderId &&
+            fastRuntime.selectedModel.model === parentRuntime.selectedModel.model);
+        const runEnv: SubagentRunEnvironment = fastRuntime
+          ? {
+              ...env,
+              ...fastRuntime,
+              fallbackRuntime: fastMatchesParent ? undefined : parentRuntime,
+            }
+          : env;
+        const queuedAt = Date.now();
+        let cardToolCall = withSubagentCardLiveState(
+          buildSubagentCardToolCall({
+            parentToolCallId: toolCall.id,
+            spec: resolved.spec,
+            identity: identityPreview,
+            index,
+            total: agents.length,
+            concurrency,
+          }),
+          { phase: "queued", toolCalls: 0, lastActivityAt: queuedAt },
+        );
+        let lastActiveProgress: SubagentCardLiveState = {
+          phase: "queued",
+          toolCalls: 0,
+          lastActivityAt: queuedAt,
+        };
+        let stallTimer: ReturnType<typeof setTimeout> | null = null;
+        const clearStallTimer = () => {
+          if (stallTimer === null) return;
+          clearTimeout(stallTimer);
+          stallTimer = null;
+        };
+        const publishProgress = (progress: SubagentCardLiveState) => {
+          lastActiveProgress = progress;
+          cardToolCall = withSubagentCardLiveState(cardToolCall, progress);
+          context?.emitToolCall?.(cardToolCall);
+          clearStallTimer();
+          if (
+            !context?.emitToolCall ||
+            progress.phase === "queued" ||
+            progress.phase === "stalled"
+          ) {
+            return;
+          }
+          stallTimer = setTimeout(() => {
+            stallTimer = null;
+            cardToolCall = withSubagentCardLiveState(cardToolCall, {
+              ...lastActiveProgress,
+              phase: "stalled",
+            });
+            context?.emitToolCall?.(cardToolCall);
+          }, stallWarningMs);
+        };
         context?.emitToolCall?.(cardToolCall);
-        context?.emitToolExecutionStart?.(cardToolCall);
         const finish = (report: SubagentReportDetails) => {
+          clearStallTimer();
           context?.emitToolResult?.(
             cardToolCall,
             buildSubagentCardResult({
@@ -381,10 +470,13 @@ export function createSubagentTools(params: {
         };
 
         try {
-          const report = await enqueueAgentRun(resolved.spec.id, () =>
-            scheduler.runSubagent(
-              () =>
-                executeSubagentRun(env, {
+          const report = await enqueueAgentRun(
+            resolved.spec.id,
+            () =>
+              scheduler.runSubagent(async () => {
+                publishProgress({ phase: "starting", toolCalls: 0, lastActivityAt: Date.now() });
+                context?.emitToolExecutionStart?.(cardToolCall);
+                return executeSubagentRun(runEnv, {
                   spec: resolved.spec,
                   existingIdentity: resolved.existingIdentity,
                   template: resolved.template,
@@ -392,9 +484,10 @@ export function createSubagentTools(params: {
                   index,
                   total: agents.length,
                   signal,
-                }),
-              signal,
-            ),
+                  onProgress: publishProgress,
+                });
+              }, signal),
+            signal,
           );
           return finish(report);
         } catch (error) {
@@ -408,6 +501,7 @@ export function createSubagentTools(params: {
             name: identityPreview.name,
             role: identityPreview.role,
             prompt: resolved.spec.prompt,
+            taskType: resolved.spec.taskType,
             templateId: resolved.spec.templateId,
             mode: resolved.spec.mode,
             status: cancelled ? "cancelled" : "failed",

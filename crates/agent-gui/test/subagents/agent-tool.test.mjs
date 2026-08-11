@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createAgentToolCall,
+  createAssistant,
   createRecordingContext,
   createSubagentHarness,
   sleep,
@@ -13,6 +14,24 @@ function contextMessageText(message) {
     .filter((block) => block.type === "text")
     .map((block) => block.text)
     .join("");
+}
+
+const FAST_RUNTIME = {
+  selectedModel: { customProviderId: "fast-provider", model: "gemini-2.5-flash" },
+  label: "Fast Provider · gemini-2.5-flash",
+  providerId: "gemini",
+  model: "gemini-2.5-flash",
+  runtime: {
+    baseUrl: "https://fast.example.test/v1",
+    apiKey: "fast-key",
+    reasoning: "low",
+  },
+};
+
+function findRunnerCallByTask(harness, taskText) {
+  return harness.runnerCalls.find((call) =>
+    contextMessageText(call.context.messages.at(-1)).includes(taskText),
+  );
 }
 
 test("readonly happy path: identity prompts, filtered child tools, SendMessage attached", async () => {
@@ -73,6 +92,239 @@ test("readonly happy path: identity prompts, filtered child tools, SendMessage a
   const finalSave = harness.storeIpc.appliedSaves.at(-1);
   assert.equal(finalSave.run.status, "completed");
   assert.equal(finalSave.run.parentToolCallId, "call-agent");
+});
+
+test("search and synthesis jobs use the Fast runtime while omitted jobs keep the parent runtime", async () => {
+  const harness = await createSubagentHarness({ fastRuntime: FAST_RUNTIME });
+  const parentToolCall = createAgentToolCall({
+    agents: [
+      { id: "searcher", prompt: "Locate the setting.", task_type: "search" },
+      { id: "summarizer", prompt: "Summarize the findings.", task_type: "synthesis" },
+      { id: "builder", prompt: "Implement the change." },
+    ],
+    concurrency: 3,
+  });
+  const recording = createRecordingContext(parentToolCall);
+  const result = await harness.bundle.executeToolCall(
+    parentToolCall,
+    undefined,
+    recording.context,
+  );
+
+  assert.equal(result.isError, false);
+  assert.deepEqual(
+    result.details.agents.map((agent) => agent.taskType),
+    ["search", "synthesis", undefined],
+  );
+  assert.match(result.content[0].text, /task_type=search/);
+  assert.match(result.content[0].text, /task_type=synthesis/);
+
+  const searchCall = findRunnerCallByTask(harness, "Locate the setting.");
+  const synthesisCall = findRunnerCallByTask(harness, "Summarize the findings.");
+  const implementationCall = findRunnerCallByTask(harness, "Implement the change.");
+  assert.match(searchCall.context.systemPrompt, /Current task type: search/);
+  assert.match(
+    contextMessageText(synthesisCall.context.messages.at(-1)),
+    /Current task type: synthesis/,
+  );
+  for (const call of [searchCall, synthesisCall]) {
+    assert.equal(call.providerId, FAST_RUNTIME.providerId);
+    assert.equal(call.model, FAST_RUNTIME.model);
+    assert.equal(call.runtime, FAST_RUNTIME.runtime);
+    assert.deepEqual(call.failover.primary, {
+      selectedModel: FAST_RUNTIME.selectedModel,
+      label: FAST_RUNTIME.label,
+    });
+    assert.equal(call.failover.config.maxSwitches, 1);
+    assert.equal(call.failover.config.failureThreshold, 1);
+    assert.deepEqual(call.failover.fallbacks[0].selectedModel, {
+      customProviderId: "parent-provider",
+      model: "gpt-5",
+    });
+  }
+  assert.equal(implementationCall.failover, undefined);
+  assert.equal(implementationCall.providerId, "codex");
+  assert.equal(implementationCall.model, "gpt-5");
+  assert.equal(implementationCall.runtime.baseUrl, "https://api.example.test/v1");
+
+  assert.ok(
+    harness.compactionCalls.some(
+      (call) =>
+        call.phase === "bind" &&
+        call.providerId === FAST_RUNTIME.providerId &&
+        call.model === FAST_RUNTIME.model,
+    ),
+  );
+  assert.ok(
+    harness.compactionCalls.some(
+      (call) => call.phase === "bind" && call.providerId === "codex" && call.model === "gpt-5",
+    ),
+  );
+
+  const completedRuns = harness.storeIpc.appliedSaves
+    .filter((save) => save.run.status === "completed")
+    .map((save) => [save.run.agentId, `${save.run.providerId}:${save.run.model}`]);
+  assert.deepEqual(Object.fromEntries(completedRuns), {
+    searcher: "gemini:gemini-2.5-flash",
+    summarizer: "gemini:gemini-2.5-flash",
+    builder: "codex:gpt-5",
+  });
+  assert.ok(
+    recording.emittedToolCalls.some(
+      (toolCall) => toolCall.arguments.id === "searcher" && toolCall.arguments.task_type === "search",
+    ),
+  );
+  assert.ok(
+    recording.emittedToolCalls.some(
+      (toolCall) =>
+        toolCall.arguments.id === "summarizer" && toolCall.arguments.task_type === "synthesis",
+    ),
+  );
+});
+
+test("classified jobs fall back to the parent runtime when no Fast runtime is available", async () => {
+  const harness = await createSubagentHarness();
+  const result = await harness.bundle.executeToolCall(
+    createAgentToolCall({
+      agents: [{ id: "searcher", prompt: "Search without a configured Fast model.", task_type: "search" }],
+    }),
+  );
+
+  assert.equal(result.isError, false);
+  assert.equal(result.details.agents[0].taskType, "search");
+  assert.equal(harness.runnerCalls[0].providerId, "codex");
+  assert.equal(harness.runnerCalls[0].model, "gpt-5");
+});
+
+test("a pre-commit Fast provider failure falls back to the parent runtime and persists the winner", async () => {
+  const parentRuntime = {
+    selectedModel: { customProviderId: "parent-provider", model: "gpt-5" },
+    label: "Parent Provider · gpt-5",
+    providerId: "codex",
+    model: "gpt-5",
+    runtime: { baseUrl: "https://parent.example.test/v1", apiKey: "parent-key" },
+  };
+  const harness = await createSubagentHarness({
+    parentRuntime,
+    fastRuntime: FAST_RUNTIME,
+    runner: async (params) => {
+      assert.equal(params.providerId, FAST_RUNTIME.providerId);
+      assert.equal(params.model, FAST_RUNTIME.model);
+      assert.ok(params.failover);
+      const fallback = params.failover.fallbacks[0];
+      assert.deepEqual(fallback, parentRuntime);
+      params.failover.onSwitched({
+        target: fallback,
+        round: 1,
+        errorMessage: "401 Unauthorized",
+      });
+      const assistant = createAssistant("parent fallback report", {
+        provider: "openai",
+        model: parentRuntime.model,
+      });
+      return { assistant, messages: [assistant], emittedMessages: [assistant] };
+    },
+  });
+
+  const result = await harness.bundle.executeToolCall(
+    createAgentToolCall({
+      agents: [
+        {
+          id: "fallback-searcher",
+          prompt: "Search even if the Fast provider is down.",
+          task_type: "search",
+        },
+      ],
+    }),
+  );
+
+  assert.equal(result.isError, false);
+  assert.equal(result.details.agents[0].status, "completed");
+  const finalSave = harness.storeIpc.appliedSaves.at(-1);
+  assert.equal(finalSave.run.status, "completed");
+  assert.equal(finalSave.run.providerId, parentRuntime.providerId);
+  assert.equal(finalSave.run.model, parentRuntime.model);
+  assert.ok(
+    harness.compactionCalls.some(
+      (call) =>
+        call.phase === "bind" &&
+        call.providerId === parentRuntime.providerId &&
+        call.model === parentRuntime.model,
+    ),
+  );
+});
+
+test("parent runtime is snapshotted per Agent batch and Fast overrides stay isolated", async () => {
+  let activeParentRuntime = {
+    selectedModel: { customProviderId: "primary-provider", model: "gpt-5" },
+    label: "Primary Provider · gpt-5",
+    providerId: "codex",
+    model: "gpt-5",
+    runtime: { baseUrl: "https://primary.example.test/v1", apiKey: "primary-key" },
+  };
+  const harness = await createSubagentHarness({
+    parentRuntime: activeParentRuntime,
+    getParentRuntime: () => activeParentRuntime,
+    fastRuntime: FAST_RUNTIME,
+  });
+
+  await harness.bundle.executeToolCall(
+    createAgentToolCall({ agents: [{ id: "before-switch", prompt: "Use primary." }] }, "call-a"),
+  );
+  activeParentRuntime = {
+    selectedModel: { customProviderId: "fallback-provider", model: "gpt-5-fallback" },
+    label: "Fallback Provider · gpt-5-fallback",
+    providerId: "codex",
+    model: "gpt-5-fallback",
+    runtime: { baseUrl: "https://fallback.example.test/v1", apiKey: "fallback-key" },
+  };
+  await harness.bundle.executeToolCall(
+    createAgentToolCall(
+      {
+        agents: [
+          { id: "after-switch", prompt: "Use the active fallback." },
+          { id: "fast-search", prompt: "Use Fast after the switch.", task_type: "search" },
+        ],
+        concurrency: 2,
+      },
+      "call-b",
+    ),
+  );
+
+  const primaryCall = findRunnerCallByTask(harness, "Use primary.");
+  const fallbackCall = findRunnerCallByTask(harness, "Use the active fallback.");
+  const fastCall = findRunnerCallByTask(harness, "Use Fast after the switch.");
+  assert.equal(primaryCall.model, "gpt-5");
+  assert.equal(primaryCall.runtime.baseUrl, "https://primary.example.test/v1");
+  assert.equal(fallbackCall.model, "gpt-5-fallback");
+  assert.equal(fallbackCall.runtime.baseUrl, "https://fallback.example.test/v1");
+  assert.equal(fastCall.model, FAST_RUNTIME.model);
+  assert.equal(fastCall.runtime, FAST_RUNTIME.runtime);
+  assert.equal(fastCall.failover.fallbacks[0].model, "gpt-5-fallback");
+  assert.equal(
+    fastCall.failover.fallbacks[0].selectedModel.customProviderId,
+    "fallback-provider",
+  );
+});
+
+test("resumed agents do not inherit a previous task_type", async () => {
+  const harness = await createSubagentHarness({ fastRuntime: FAST_RUNTIME });
+  const first = await harness.bundle.executeToolCall(
+    createAgentToolCall({
+      agents: [{ id: "researcher", prompt: "Find the relevant code.", task_type: "search" }],
+    }),
+  );
+  const second = await harness.bundle.executeToolCall(
+    createAgentToolCall({ agents: [{ id: "researcher", prompt: "Implement the fix now." }] }, "call-2"),
+  );
+
+  assert.equal(first.details.agents[0].taskType, "search");
+  assert.equal(second.details.agents[0].taskType, undefined);
+  assert.equal(harness.runnerCalls[0].model, FAST_RUNTIME.model);
+  assert.equal(harness.runnerCalls[1].model, "gpt-5");
+  const continuationText = contextMessageText(harness.runnerCalls[1].context.messages.at(-1));
+  assert.match(continuationText, /Current task type: unclassified \(task_type omitted\)/);
+  assert.doesNotMatch(continuationText, /Current task type: search/);
 });
 
 test("subagents inherit the parent run's resolved Skills prompt snapshot", async () => {
@@ -622,11 +874,14 @@ test("identity upsert failure yields a provision_failed report without running t
     storeIpcOptions: { upsertIdentityError: new Error("sqlite locked") },
   });
   const result = await harness.bundle.executeToolCall(
-    createAgentToolCall({ agents: [{ id: "ghost", prompt: "never provisioned" }] }),
+    createAgentToolCall({
+      agents: [{ id: "ghost", prompt: "never provisioned", task_type: "search" }],
+    }),
   );
   assert.equal(result.isError, true);
   const report = result.details.agents[0];
   assert.equal(report.status, "failed");
+  assert.equal(report.taskType, "search");
   assert.match(report.error, /^provision_failed: sqlite locked/);
   assert.equal(harness.runnerCalls.length, 0);
   assert.equal(harness.worktreeIpc.creates.length, 0);
@@ -653,7 +908,7 @@ test("per-agent cards stream through the execution context with stable synthetic
   assert.equal(result.details.mode, "mixed");
 
   assert.deepEqual(
-    recording.emittedToolCalls.map((toolCall) => toolCall.id).sort(),
+    [...new Set(recording.emittedToolCalls.map((toolCall) => toolCall.id))].sort(),
     ["call-agent:agent:1", "call-agent:agent:2"],
   );
   for (const toolCall of recording.emittedToolCalls) {

@@ -228,6 +228,29 @@ test("non-eligible errors surface immediately without switching", async () => {
   assert.equal(isFailoverTargetAvailable("primary", BREAKER_CONFIG), true);
 });
 
+test("empty-response exhaustion preserves the existing provider failover behavior", async () => {
+  const switches = [];
+  const stream = withProviderFailover(
+    [
+      makeCandidate(
+        "primary",
+        uncommittedErrorEvents("Upstream returned an empty response"),
+      ),
+      makeCandidate("fallback-1", successEvents("fallback-answer")),
+    ],
+    {
+      config: BREAKER_CONFIG,
+      onFailover: (event) => switches.push(event),
+    },
+  );
+
+  const events = await collectEvents(stream);
+  assert.equal(switches.length, 1);
+  assert.equal(events.some((event) => event.type === "error"), false);
+  const result = await stream.result();
+  assert.equal(result.content[0].text, "fallback-answer");
+});
+
 test("errors after content committed do not switch providers", async () => {
   const message = makeErrorMessage("503 mid-stream failure");
   const stream = withProviderFailover(
@@ -243,6 +266,30 @@ test("errors after content committed do not switch providers", async () => {
   );
   const events = await collectEvents(stream);
   assert.equal(events.some((event) => event.type === "text_delta"), true);
+  assert.equal(events.at(-1)?.type, "error");
+});
+
+test("errors after a tool call starts do not fall back and risk duplicate side effects", async () => {
+  const message = makeErrorMessage("503 after tool call start");
+  let fallbackStarted = false;
+  const stream = withProviderFailover(
+    [
+      makeCandidate("primary", [
+        { type: "start", partial: message },
+        { type: "toolcall_start", contentIndex: 0, partial: message },
+        { type: "error", reason: "error", error: message },
+      ]),
+      makeCandidate("fallback-1", () => {
+        fallbackStarted = true;
+        return successEvents();
+      }),
+    ],
+    { config: BREAKER_CONFIG },
+  );
+
+  const events = await collectEvents(stream);
+  assert.equal(fallbackStarted, false);
+  assert.equal(events.some((event) => event.type === "toolcall_start"), true);
   assert.equal(events.at(-1)?.type, "error");
 });
 

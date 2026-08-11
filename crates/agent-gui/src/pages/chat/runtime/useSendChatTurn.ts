@@ -118,6 +118,7 @@ import {
   buildModelFailoverPlan,
   resolveConversationTitleModelSelection,
   resolveMemorySummaryModelSelection,
+  resolveSubagentFastModelSelection,
   selectedModelsMatch,
 } from "./providerRuntimeConfig";
 
@@ -468,6 +469,20 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       overrides?.runtimeControlsOverride ??
       settings.chatRuntimeControls;
     const providerConfig = createProviderRuntimeConfig(provider, model, runtimeControls);
+    const subagentFastModelSelection = resolveSubagentFastModelSelection(settings);
+    const subagentFastRuntime = subagentFastModelSelection
+      ? {
+          selectedModel: subagentFastModelSelection.selectedModel,
+          label: `${subagentFastModelSelection.provider.name} · ${subagentFastModelSelection.model}`,
+          providerId: subagentFastModelSelection.providerId,
+          model: subagentFastModelSelection.model,
+          runtime: createProviderRuntimeConfig(
+            subagentFastModelSelection.provider,
+            subagentFastModelSelection.model,
+            runtimeControls,
+          ),
+        }
+      : undefined;
     // cc-switch style auto-failover plan for this turn (shared by the agent
     // and text runtimes). The switch callback makes the winning fallback the
     // conversation's selection so follow-up turns start on the healthy
@@ -1504,6 +1519,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
             providerId,
             model,
             runtime: providerConfig,
+            subagentFastRuntime,
             failover: failoverParams,
             runtimeModel,
             selectedModel,

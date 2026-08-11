@@ -1,4 +1,5 @@
 import {
+  type AssistantMessage,
   type AssistantMessageEvent,
   type AssistantMessageEventStream,
   createAssistantMessageEventStream,
@@ -7,6 +8,11 @@ import {
 
 /** 6 total attempts = 5 retries after the initial try — matches codex's stream_max_retries=5. */
 export const DEFAULT_STREAM_RETRY_MAX_ATTEMPTS = 6;
+export const EMPTY_ASSISTANT_RESPONSE_ERROR = "Upstream returned an empty response";
+
+export function isEmptyAssistantResponseError(errorMessage: string | undefined): boolean {
+  return errorMessage === EMPTY_ASSISTANT_RESPONSE_ERROR;
+}
 
 export type RetryAttemptRecord = {
   attempt: number;
@@ -35,11 +41,18 @@ export type StreamRetryOptions = StreamRetryConfig & {
 
 type TerminalEvent = Extract<AssistantMessageEvent, { type: "done" | "error" }>;
 
-const COMMITTING_EVENT_TYPES = new Set<AssistantMessageEvent["type"]>([
-  "text_delta",
-  "thinking_delta",
-  "toolcall_start",
-]);
+function isCommittingEvent(event: AssistantMessageEvent): boolean {
+  if (event.type === "text_delta" || event.type === "thinking_delta") {
+    return event.delta.trim().length > 0;
+  }
+  return event.type === "toolcall_start";
+}
+
+// A terminal-less EOF is a transport truncation, not a semantic provider error.
+// pi-ai currently misses the OpenAI Responses wording; keep the pre-commit guard
+// in withStreamRetry as the safety boundary against duplicated output/tool calls.
+const RETRYABLE_PREMATURE_STREAM_END_ERROR_PATTERN =
+  /OpenAI Responses stream ended before a terminal response event/i;
 
 function isTerminalEvent(event: AssistantMessageEvent): event is TerminalEvent {
   return event.type === "done" || event.type === "error";
@@ -47,6 +60,41 @@ function isTerminalEvent(event: AssistantMessageEvent): event is TerminalEvent {
 
 function terminalMessage(event: TerminalEvent) {
   return event.type === "done" ? event.message : event.error;
+}
+
+function hasMeaningfulAssistantContent(message: AssistantMessage): boolean {
+  return message.content.some((block) => {
+    if (block.type === "text") return block.text.trim().length > 0;
+    if (block.type === "thinking") return block.thinking.trim().length > 0;
+    // Tool calls and any future provider-specific block types are meaningful.
+    return true;
+  });
+}
+
+function isCleanEmptyAssistantResponse(message: AssistantMessage): boolean {
+  return (
+    message.stopReason !== "error" &&
+    message.stopReason !== "aborted" &&
+    !hasMeaningfulAssistantContent(message)
+  );
+}
+
+function buildEmptyAssistantResponseError(message: AssistantMessage): AssistantMessage {
+  return {
+    ...message,
+    content: [],
+    stopReason: "error",
+    errorMessage: EMPTY_ASSISTANT_RESPONSE_ERROR,
+  };
+}
+
+function isRetryableStreamError(event: TerminalEvent): boolean {
+  const message = terminalMessage(event);
+  return (
+    isRetryableAssistantError(message) ||
+    (message.stopReason === "error" &&
+      RETRYABLE_PREMATURE_STREAM_END_ERROR_PATTERN.test(message.errorMessage ?? ""))
+  );
 }
 
 /** Codex-style backoff: base * factor^(attempt-1) * uniform(0.9, 1.1), uncapped. */
@@ -73,15 +121,16 @@ function sleepWithAbort(ms: number, signal: AbortSignal | undefined): Promise<vo
 
 /**
  * Wraps a fresh-stream factory with attempt-scoped retry for transient
- * provider/transport failures.
+ * provider/transport failures and clean responses with no meaningful content.
  *
  * Events are buffered per attempt until the first content-bearing event
  * ("committed": text_delta / thinking_delta / toolcall_start) is observed. An
- * attempt that ends in error before committing, classified retryable by
- * pi-ai's `isRetryableAssistantError`, is discarded wholesale and replaced by
- * a fresh `factory()` call after a codex-style backoff — the caller never
- * sees the failed attempt's events. Once committed, or once retries are
- * exhausted/disabled, events pass straight through untouched. `onRetry` /
+ * attempt that fails before committing, or completes cleanly with empty
+ * content, is discarded wholesale and replaced by a fresh `factory()` call
+ * after a codex-style backoff — the caller never sees the discarded attempt's
+ * events. Once committed, events pass straight through untouched. A clean
+ * empty response that exhausts or disables retries is converted into an
+ * explicit error rather than silently succeeding. `onRetry` /
  * `onRetryRecovered` let callers surface an ephemeral "reconnecting" status
  * in place of the frozen UI, mirroring codex's TUI behavior.
  *
@@ -113,7 +162,7 @@ export function withStreamRetry(
       let terminal: TerminalEvent | undefined;
 
       for await (const event of source) {
-        if (!committed && COMMITTING_EVENT_TYPES.has(event.type)) {
+        if (!committed && isCommittingEvent(event)) {
           committed = true;
           for (const bufferedEvent of buffered.splice(0)) output.push(bufferedEvent);
           if (hasRetried) {
@@ -129,32 +178,45 @@ export function withStreamRetry(
         if (isTerminalEvent(event)) terminal = event;
       }
 
-      if (terminal?.type === "error" && !committed && !disabled && attempt < maxAttempts) {
-        if (isRetryableAssistantError(terminalMessage(terminal))) {
-          const errorMessage = terminalMessage(terminal)?.errorMessage || "Unknown error";
-          attempt += 1;
-          options?.onRetry?.(attempt - 1, maxAttempts - 1, errorMessage);
-          hasRetried = true;
-          try {
-            await sleepWithAbort(computeStreamRetryBackoffMs(attempt - 1), signal);
-            source = factory();
-            continue;
-          } catch {
-            // Aborted mid-backoff, or the next attempt failed to start —
-            // surface the prior attempt's real failure below instead of
-            // hanging the consumer on a retry that will never happen.
-          }
+      // Some streams (notably minimal test doubles) never yield a terminal
+      // done/error event through iteration and only expose the final message
+      // via result(), so empty-response detection must inspect the result too.
+      const result = await source.result();
+      const emptyResponse = !committed && isCleanEmptyAssistantResponse(result);
+      const retryErrorMessage = emptyResponse
+        ? EMPTY_ASSISTANT_RESPONSE_ERROR
+        : terminal?.type === "error" && !committed && isRetryableStreamError(terminal)
+          ? terminalMessage(terminal).errorMessage || "Unknown error"
+          : undefined;
+
+      if (retryErrorMessage && !disabled && attempt < maxAttempts) {
+        attempt += 1;
+        options?.onRetry?.(attempt - 1, maxAttempts - 1, retryErrorMessage);
+        hasRetried = true;
+        try {
+          await sleepWithAbort(computeStreamRetryBackoffMs(attempt - 1), signal);
+          source = factory();
+          continue;
+        } catch {
+          // Aborted mid-backoff, or the next attempt failed to start —
+          // surface the prior attempt's real failure below instead of
+          // hanging the consumer on a retry that will never happen.
         }
+      }
+
+      if (emptyResponse) {
+        const error = buildEmptyAssistantResponseError(result);
+        output.push({ type: "error", reason: "error", error });
+        output.end(error);
+        return;
       }
 
       if (!committed) {
         for (const bufferedEvent of buffered) output.push(bufferedEvent);
       }
-      // Some streams (notably minimal test doubles) never yield a terminal
-      // done/error event through iteration and only expose the final message
-      // via result(). output.end() is idempotent once a terminal event has
-      // already been pushed above, so this also safety-nets that case.
-      output.end(await source.result());
+      // output.end() is idempotent once a terminal event has already been
+      // pushed above, so this also safety-nets terminal-less test doubles.
+      output.end(result);
       return;
     }
   })();

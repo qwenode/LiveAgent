@@ -50,13 +50,44 @@ export function assistantMessageToText(message: Message | null | undefined) {
 
 export function createSequentialQueue() {
   let tail = Promise.resolve();
-  return async function enqueue<T>(run: () => Promise<T>): Promise<T> {
-    const next = tail.then(run, run);
+  return async function enqueue<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) {
+      const next = tail.then(run, run);
+      tail = next.then(
+        () => undefined,
+        () => undefined,
+      );
+      return next;
+    }
+    if (signal.aborted) throw new Error("Cancelled");
+
+    let aborted = false;
+    let rejectAbort: ((error: Error) => void) | undefined;
+    const abortPromise = new Promise<never>((_resolve, reject) => {
+      rejectAbort = reject;
+    });
+    const onAbort = () => {
+      aborted = true;
+      rejectAbort?.(new Error("Cancelled"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+
+    const runWhenReady = () => {
+      signal.removeEventListener("abort", onAbort);
+      if (aborted || signal.aborted) throw new Error("Cancelled");
+      return run();
+    };
+    const next = tail.then(runWhenReady, runWhenReady);
     tail = next.then(
       () => undefined,
       () => undefined,
     );
-    return next;
+
+    try {
+      return await Promise.race([next, abortPromise]);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
   };
 }
 

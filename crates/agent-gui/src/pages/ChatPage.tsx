@@ -2111,7 +2111,6 @@ export function ChatPage(props: ChatPageProps) {
                         : prev;
                     })
                   }
-                  onOpenSettings={onOpenSettings}
                   chatRuntimeControls={chatRuntimeControlsForCurrentProvider}
                   reasoningOptions={chatRuntimeReasoningOptions}
                   thinkingAlwaysOn={chatRuntimeThinkingAlwaysOn}
