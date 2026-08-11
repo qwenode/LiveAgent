@@ -11,7 +11,7 @@ import {
 import { AGENT_TOOL_NAME, type SubagentIdentity, type SubagentSpec } from "./types";
 
 /**
- * Synthetic per-agent tool call emitted when a subagent starts executing.
+ * Synthetic per-agent tool call emitted as soon as a subagent is queued.
  * Reuses the same id scheme as the streaming placeholder cards so live
  * placeholders upgrade in place.
  */

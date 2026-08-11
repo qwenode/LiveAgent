@@ -13,6 +13,7 @@ import {
 } from "@liveagent/ui/lib/chat/askUserQuestion";
 import { readToolApprovalPending } from "@liveagent/ui/lib/chat/toolApprovalArgs";
 import { cn } from "@liveagent/ui/lib/shared/utils";
+import { readSubagentCardLiveState } from "@liveagent/ui/lib/subagents/protocol";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronRight } from "../../../components/icons";
 import type { ToolResultMessage } from "../../../lib/agentTypes";
@@ -92,6 +93,9 @@ function ToolCallItem({
     (item.toolCall.name === "Image" || builtinResultKind === "display_image" || shouldKeepAskOpen);
   const [open, setOpen] = useState(readOnly || isRedactedToolContent ? false : shouldAutoOpen);
   const isSubagentCard = isSubagentCardToolCall(item.toolCall);
+  const subagentLiveState = isSubagentCard
+    ? readSubagentCardLiveState(item.toolCall.arguments)
+    : null;
   const hasArgs = Object.keys(item.toolCall.arguments || {}).length > 0;
   const isStreamingFilePreviewTool = FILE_TOOL_TEXT_FIELDS[item.toolCall.name] !== undefined;
   const shouldShowArgs =
@@ -130,6 +134,28 @@ function ToolCallItem({
     : isRedactedToolContent
       ? { name: getToolDisplayName(item.toolCall.name), action: "" }
       : getToolDisplayTitle(item.toolCall);
+  const subagentStatusLabel = (() => {
+    switch (subagentLiveState?.phase) {
+      case "queued":
+        return t("chat.subagent.queued");
+      case "starting":
+        return t("chat.subagent.starting");
+      case "model":
+        return t("chat.subagent.model");
+      case "responding":
+        return t("chat.subagent.responding");
+      case "tool":
+        return subagentLiveState.activeTool
+          ? t("chat.subagent.toolNamed").replace("{tool}", subagentLiveState.activeTool)
+          : t("chat.subagent.tool");
+      case "settling":
+        return t("chat.subagent.settling");
+      case "stalled":
+        return t("chat.subagent.stalled");
+      default:
+        return t("chat.tool.running");
+    }
+  })();
 
   const statusLabel = isApprovalPending
     ? t("chat.toolApproval.waitingStatus")
@@ -138,7 +164,9 @@ function ToolCallItem({
         ? askQuestions.length > 0
           ? t("chat.askUser.waiting")
           : t("chat.askUser.preparing")
-        : t("chat.tool.running")
+        : isSubagentCard
+          ? subagentStatusLabel
+          : t("chat.tool.running")
       : result
         ? result.isError
           ? t("chat.tool.failed")
@@ -211,7 +239,12 @@ function ToolCallItem({
       <div className="flex shrink-0 items-center gap-2">
         {isRunning ? (
           <AssistantStatus
-            className="min-h-0 gap-1.5 text-[calc(11px*var(--zone-font-scale,1))] text-muted-foreground/60"
+            className={cn(
+              "min-h-0 gap-1.5 text-[calc(11px*var(--zone-font-scale,1))]",
+              subagentLiveState?.phase === "stalled"
+                ? "text-amber-600 dark:text-amber-400"
+                : "text-muted-foreground/60",
+            )}
             iconClassName="h-3 w-3"
           >
             {statusLabel}

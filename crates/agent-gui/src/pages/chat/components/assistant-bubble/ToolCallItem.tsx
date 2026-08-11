@@ -12,6 +12,7 @@ import {
   sanitizeAskUserQuestionItems,
 } from "@liveagent/ui/lib/chat/askUserQuestion";
 import { cn } from "@liveagent/ui/lib/shared/utils";
+import { readSubagentCardLiveState } from "@liveagent/ui/lib/subagents/protocol";
 import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { ChevronRight, Search } from "../../../../components/icons";
 import { deriveFileChangeStats } from "../../../../lib/chat/messages/fileChangeStats";
@@ -189,6 +190,19 @@ function ToolArgsDisplay({ item }: { item: ToolTraceItem }) {
     const name = displayString(args.name) || displayString(args.id);
     const role = displayString(args.role);
     const task = displayString(args.prompt);
+    const live = readSubagentCardLiveState(args);
+    const liveTags: MetaTag[] = live
+      ? [
+          { label: "phase", value: live.phase },
+          ...(typeof live.round === "number"
+            ? [{ label: "round", value: String(live.round) }]
+            : []),
+          ...(typeof live.toolCalls === "number"
+            ? [{ label: "tools", value: String(live.toolCalls) }]
+            : []),
+          ...(live.activeTool ? [{ label: "active", value: live.activeTool }] : []),
+        ]
+      : [];
 
     return (
       <div className="tool-expand flex flex-col gap-2">
@@ -216,6 +230,7 @@ function ToolArgsDisplay({ item }: { item: ToolTraceItem }) {
             </div>
           </ToolSurface>
         ) : null}
+        {liveTags.length > 0 ? <MetaTags tags={liveTags} /> : null}
       </div>
     );
   }
@@ -352,6 +367,9 @@ function ToolCallItem({ item, isRunning }: { item: ToolTraceItem; isRunning?: bo
     item.toolCall.name === "Image" || builtinResultKind === "display_image" || shouldKeepAskOpen;
   const [open, setOpen] = useState(shouldAutoOpen);
   const isSubagentCard = isSubagentCardToolCall(item.toolCall);
+  const subagentLiveState = isSubagentCard
+    ? readSubagentCardLiveState(item.toolCall.arguments)
+    : null;
   const hasArgs = Object.keys(item.toolCall.arguments || {}).length > 0;
   const isStreamingFilePreviewTool = FILE_TOOL_TEXT_FIELDS[item.toolCall.name] !== undefined;
   const shouldShowArgs =
@@ -380,6 +398,28 @@ function ToolCallItem({ item, isRunning }: { item: ToolTraceItem; isRunning?: bo
   const title = isAskUser
     ? { name: t("chat.tool.askUserTitle"), action: "" }
     : getToolDisplayTitle(item.toolCall);
+  const subagentStatusLabel = (() => {
+    switch (subagentLiveState?.phase) {
+      case "queued":
+        return t("chat.subagent.queued");
+      case "starting":
+        return t("chat.subagent.starting");
+      case "model":
+        return t("chat.subagent.model");
+      case "responding":
+        return t("chat.subagent.responding");
+      case "tool":
+        return subagentLiveState.activeTool
+          ? t("chat.subagent.toolNamed").replace("{tool}", subagentLiveState.activeTool)
+          : t("chat.subagent.tool");
+      case "settling":
+        return t("chat.subagent.settling");
+      case "stalled":
+        return t("chat.subagent.stalled");
+      default:
+        return t("chat.tool.running");
+    }
+  })();
 
   const statusLabel = pendingApproval
     ? t("chat.toolApproval.waitingStatus")
@@ -388,7 +428,9 @@ function ToolCallItem({ item, isRunning }: { item: ToolTraceItem; isRunning?: bo
         ? askQuestions.length > 0
           ? t("chat.askUser.waiting")
           : t("chat.askUser.preparing")
-        : t("chat.tool.running")
+        : isSubagentCard
+          ? subagentStatusLabel
+          : t("chat.tool.running")
       : result
         ? result.isError
           ? t("chat.tool.failed")
@@ -466,7 +508,12 @@ function ToolCallItem({ item, isRunning }: { item: ToolTraceItem; isRunning?: bo
         <div className="flex shrink-0 items-center gap-2">
           {isRunning ? (
             <AssistantStatus
-              className="min-h-0 gap-1.5 text-[calc(11px*var(--zone-font-scale,1))] text-muted-foreground/60"
+              className={cn(
+                "min-h-0 gap-1.5 text-[calc(11px*var(--zone-font-scale,1))]",
+                subagentLiveState?.phase === "stalled"
+                  ? "text-amber-600 dark:text-amber-400"
+                  : "text-muted-foreground/60",
+              )}
               iconClassName="h-3 w-3"
             >
               {statusLabel}

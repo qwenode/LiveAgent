@@ -888,6 +888,110 @@ test("identity upsert failure yields a provision_failed report without running t
   assert.equal(harness.storeIpc.issuedSaves.length, 0);
 });
 
+test("per-agent cards publish queued, model, response, tool, and settling progress", async () => {
+  const harness = await createSubagentHarness({
+    runner: async (params) => {
+      params.onTurnStart?.(2);
+      params.onTextDelta?.("partial response");
+      const childToolCall = {
+        type: "toolCall",
+        id: "child-read",
+        name: "Read",
+        arguments: {},
+      };
+      params.onToolExecutionStart?.(childToolCall, 2);
+      const childToolResult = await params.executeToolCall(childToolCall);
+      params.onToolResult?.(childToolCall, childToolResult, 2);
+      const assistant = createAssistant("live progress complete");
+      return { assistant, messages: [assistant], emittedMessages: [assistant] };
+    },
+  });
+  const parentToolCall = createAgentToolCall({
+    agents: [{ id: "observer", prompt: "Expose every live phase." }],
+  });
+  const recording = createRecordingContext(parentToolCall);
+
+  const result = await harness.bundle.executeToolCall(
+    parentToolCall,
+    undefined,
+    recording.context,
+  );
+
+  assert.equal(result.isError, false);
+  const states = recording.emittedToolCalls
+    .filter((toolCall) => toolCall.arguments.id === "observer")
+    .map((toolCall) => toolCall.arguments);
+  assert.equal(states[0].phase, "queued");
+  assert.equal(states[0].tool_calls, 0);
+
+  const phases = states.map((state) => state.phase);
+  let phaseIndex = -1;
+  for (const expected of [
+    "queued",
+    "starting",
+    "model",
+    "responding",
+    "tool",
+    "model",
+    "settling",
+  ]) {
+    phaseIndex = phases.indexOf(expected, phaseIndex + 1);
+    assert.notEqual(phaseIndex, -1, `missing ordered phase ${expected}: ${phases.join(", ")}`);
+  }
+
+  const toolState = states.find((state) => state.phase === "tool");
+  assert.equal(toolState.active_tool, "Read");
+  assert.equal(toolState.tool_calls, 1);
+  assert.equal(toolState.round, 2);
+  assert.equal(recording.emittedToolResults.length, 1);
+  assert.equal(recording.emittedToolResults[0].toolCall.arguments.phase, "settling");
+});
+
+test("queued cards warn when stalled, recover on start, and stop warning after finish", async () => {
+  const harness = await createSubagentHarness({
+    stallWarningMs: 10,
+    runner: async (params, invocation) => {
+      params.onTurnStart?.(1);
+      if (invocation === 1) await sleep(50);
+      const assistant = createAssistant(`queued recovery:${invocation}`);
+      return { assistant, messages: [assistant], emittedMessages: [assistant] };
+    },
+  });
+  const parentToolCall = createAgentToolCall({
+    agents: [
+      { id: "blocker", prompt: "Hold the only scheduler slot." },
+      { id: "waiter", prompt: "Wait, warn, then recover." },
+    ],
+    concurrency: 1,
+  });
+  const recording = createRecordingContext(parentToolCall);
+
+  const result = await harness.bundle.executeToolCall(
+    parentToolCall,
+    undefined,
+    recording.context,
+  );
+
+  assert.equal(result.isError, false);
+  const waiterStates = recording.emittedToolCalls
+    .filter((toolCall) => toolCall.arguments.id === "waiter")
+    .map((toolCall) => toolCall.arguments);
+  assert.equal(waiterStates[0].phase, "queued");
+  const stalledIndex = waiterStates.findIndex((state) => state.phase === "stalled");
+  assert.notEqual(stalledIndex, -1);
+  assert.equal(waiterStates[stalledIndex].last_activity_at, waiterStates[0].last_activity_at);
+  const resumedIndex = waiterStates.findIndex(
+    (state, index) => index > stalledIndex && state.phase === "starting",
+  );
+  assert.notEqual(resumedIndex, -1);
+  assert.ok(waiterStates.slice(resumedIndex).some((state) => state.phase === "model"));
+  assert.ok(waiterStates.slice(resumedIndex).some((state) => state.phase === "settling"));
+
+  const emittedAtFinish = recording.emittedToolCalls.length;
+  await sleep(25);
+  assert.equal(recording.emittedToolCalls.length, emittedAtFinish);
+});
+
 test("per-agent cards stream through the execution context with stable synthetic ids", async () => {
   const harness = await createSubagentHarness();
   const parentToolCall = createAgentToolCall({

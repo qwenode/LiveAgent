@@ -298,6 +298,14 @@ export const translations: Record<Locale, Record<string, string>> = {
 
     /* ── Chat tool calls ── */
     "chat.tool.running": "运行中",
+    "chat.subagent.queued": "排队中",
+    "chat.subagent.starting": "正在启动",
+    "chat.subagent.model": "模型处理中",
+    "chat.subagent.responding": "正在响应",
+    "chat.subagent.tool": "执行工具",
+    "chat.subagent.toolNamed": "执行 {tool}",
+    "chat.subagent.settling": "正在收尾",
+    "chat.subagent.stalled": "长时间无活动",
     "chat.tool.failed": "失败",
     "chat.tool.success": "已完成",
     "chat.tool.waiting": "等待",
@@ -2565,6 +2573,14 @@ export const translations: Record<Locale, Record<string, string>> = {
 
     /* ── Chat tool calls ── */
     "chat.tool.running": "Running",
+    "chat.subagent.queued": "Queued",
+    "chat.subagent.starting": "Starting",
+    "chat.subagent.model": "Thinking",
+    "chat.subagent.responding": "Responding",
+    "chat.subagent.tool": "Running tool",
+    "chat.subagent.toolNamed": "Running {tool}",
+    "chat.subagent.settling": "Finalizing",
+    "chat.subagent.stalled": "No activity for a while",
     "chat.tool.failed": "Failed",
     "chat.tool.success": "Completed",
     "chat.tool.waiting": "Waiting",

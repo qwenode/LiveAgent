@@ -1206,6 +1206,14 @@ test("buildSubagentPlaceholderToolCalls builds stable Agent cards from structure
     ["search", "synthesis"],
   );
   assert.deepEqual(
+    placeholders.map((item) => item.arguments.phase),
+    ["queued", "queued"],
+  );
+  assert.deepEqual(
+    placeholders.map((item) => item.arguments.tool_calls),
+    [0, 0],
+  );
+  assert.deepEqual(
     placeholders.map((item) => item.arguments.subagent_card),
     [true, true],
   );

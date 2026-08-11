@@ -796,6 +796,8 @@ export function buildSubagentPlaceholderToolCalls(parentToolCall: ToolCall): Too
             ? record.task_type
             : undefined,
         prompt,
+        phase: "queued",
+        tool_calls: 0,
       },
     });
   });

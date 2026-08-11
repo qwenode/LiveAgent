@@ -380,95 +380,87 @@ export function createSubagentTools(params: {
       onStatus: context?.emitToolStatus,
     };
 
-    const reports = await runWithConcurrency(
-      agents,
-      concurrency,
-      async (resolved, index): Promise<SubagentReportDetails> => {
-        const identityPreview =
-          resolved.existingIdentity ??
-          createSubagentIdentity({
-            parentConversationId: store.conversationId,
-            toolCallId: toolCall.id,
-            spec: resolved.spec,
-            template: resolved.template,
-            now: Date.now(),
+    const queuedRuns = agents.map((resolved, index) => {
+      const identityPreview =
+        resolved.existingIdentity ??
+        createSubagentIdentity({
+          parentConversationId: store.conversationId,
+          toolCallId: toolCall.id,
+          spec: resolved.spec,
+          template: resolved.template,
+          now: Date.now(),
+        });
+      const shouldUseFastRuntime =
+        resolved.spec.taskType === "search" || resolved.spec.taskType === "synthesis";
+      const fastRuntime = shouldUseFastRuntime ? params.fastRuntime : undefined;
+      const fastMatchesParent =
+        !fastRuntime ||
+        (fastRuntime.selectedModel.customProviderId ===
+          parentRuntime.selectedModel.customProviderId &&
+          fastRuntime.selectedModel.model === parentRuntime.selectedModel.model);
+      const runEnv: SubagentRunEnvironment = fastRuntime
+        ? {
+            ...env,
+            ...fastRuntime,
+            fallbackRuntime: fastMatchesParent ? undefined : parentRuntime,
+          }
+        : env;
+      const queuedAt = Date.now();
+      let cardToolCall = withSubagentCardLiveState(
+        buildSubagentCardToolCall({
+          parentToolCallId: toolCall.id,
+          spec: resolved.spec,
+          identity: identityPreview,
+          index,
+          total: agents.length,
+          concurrency,
+        }),
+        { phase: "queued", toolCalls: 0, lastActivityAt: queuedAt },
+      );
+      let lastActiveProgress: SubagentCardLiveState = {
+        phase: "queued",
+        toolCalls: 0,
+        lastActivityAt: queuedAt,
+      };
+      let stallTimer: ReturnType<typeof setTimeout> | null = null;
+      const clearStallTimer = () => {
+        if (stallTimer === null) return;
+        clearTimeout(stallTimer);
+        stallTimer = null;
+      };
+      const publishProgress = (progress: SubagentCardLiveState) => {
+        lastActiveProgress = progress;
+        cardToolCall = withSubagentCardLiveState(cardToolCall, progress);
+        context?.emitToolCall?.(cardToolCall);
+        clearStallTimer();
+        if (!context?.emitToolCall || progress.phase === "stalled") return;
+        stallTimer = setTimeout(() => {
+          stallTimer = null;
+          cardToolCall = withSubagentCardLiveState(cardToolCall, {
+            ...lastActiveProgress,
+            phase: "stalled",
           });
-        const shouldUseFastRuntime =
-          resolved.spec.taskType === "search" || resolved.spec.taskType === "synthesis";
-        const fastRuntime = shouldUseFastRuntime ? params.fastRuntime : undefined;
-        const fastMatchesParent =
-          !fastRuntime ||
-          (fastRuntime.selectedModel.customProviderId ===
-            parentRuntime.selectedModel.customProviderId &&
-            fastRuntime.selectedModel.model === parentRuntime.selectedModel.model);
-        const runEnv: SubagentRunEnvironment = fastRuntime
-          ? {
-              ...env,
-              ...fastRuntime,
-              fallbackRuntime: fastMatchesParent ? undefined : parentRuntime,
-            }
-          : env;
-        const queuedAt = Date.now();
-        let cardToolCall = withSubagentCardLiveState(
-          buildSubagentCardToolCall({
+          context?.emitToolCall?.(cardToolCall);
+        }, stallWarningMs);
+      };
+      publishProgress(lastActiveProgress);
+      const finish = (report: SubagentReportDetails) => {
+        clearStallTimer();
+        context?.emitToolResult?.(
+          cardToolCall,
+          buildSubagentCardResult({
             parentToolCallId: toolCall.id,
-            spec: resolved.spec,
-            identity: identityPreview,
+            cardToolCall,
+            report,
             index,
             total: agents.length,
             concurrency,
           }),
-          { phase: "queued", toolCalls: 0, lastActivityAt: queuedAt },
         );
-        let lastActiveProgress: SubagentCardLiveState = {
-          phase: "queued",
-          toolCalls: 0,
-          lastActivityAt: queuedAt,
-        };
-        let stallTimer: ReturnType<typeof setTimeout> | null = null;
-        const clearStallTimer = () => {
-          if (stallTimer === null) return;
-          clearTimeout(stallTimer);
-          stallTimer = null;
-        };
-        const publishProgress = (progress: SubagentCardLiveState) => {
-          lastActiveProgress = progress;
-          cardToolCall = withSubagentCardLiveState(cardToolCall, progress);
-          context?.emitToolCall?.(cardToolCall);
-          clearStallTimer();
-          if (
-            !context?.emitToolCall ||
-            progress.phase === "queued" ||
-            progress.phase === "stalled"
-          ) {
-            return;
-          }
-          stallTimer = setTimeout(() => {
-            stallTimer = null;
-            cardToolCall = withSubagentCardLiveState(cardToolCall, {
-              ...lastActiveProgress,
-              phase: "stalled",
-            });
-            context?.emitToolCall?.(cardToolCall);
-          }, stallWarningMs);
-        };
-        context?.emitToolCall?.(cardToolCall);
-        const finish = (report: SubagentReportDetails) => {
-          clearStallTimer();
-          context?.emitToolResult?.(
-            cardToolCall,
-            buildSubagentCardResult({
-              parentToolCallId: toolCall.id,
-              cardToolCall,
-              report,
-              index,
-              total: agents.length,
-              concurrency,
-            }),
-          );
-          return report;
-        };
+        return report;
+      };
 
+      return async (): Promise<SubagentReportDetails> => {
         try {
           const report = await enqueueAgentRun(
             resolved.spec.id,
@@ -514,8 +506,9 @@ export function createSubagentTools(params: {
               : normalizeErrorMessage(error, "Delegated subagent failed"),
           });
         }
-      },
-    );
+      };
+    });
+    const reports = await runWithConcurrency(queuedRuns, concurrency, (run) => run());
 
     const details: SubagentBatchDetails = {
       kind: "subagent_batch",

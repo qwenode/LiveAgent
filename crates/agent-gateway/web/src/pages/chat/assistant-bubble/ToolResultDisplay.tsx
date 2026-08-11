@@ -10,10 +10,11 @@ import {
   ToolSurfaceLabel,
 } from "@liveagent/ui/components/chat/ToolSurfaces";
 import { Markdown } from "@liveagent/ui/components/Markdown";
-import type {
-  SubagentBatchDetails,
-  SubagentCardDetails,
-  SubagentMessageDetails,
+import {
+  readSubagentCardLiveState,
+  type SubagentBatchDetails,
+  type SubagentCardDetails,
+  type SubagentMessageDetails,
 } from "@liveagent/ui/lib/subagents/protocol";
 import { Search } from "../../../components/icons";
 import type { ToolResultMessage } from "../../../lib/agentTypes";
@@ -234,6 +235,19 @@ export function ToolArgsDisplay({ item }: { item: ToolTraceItem }) {
     const name = displayString(args.name) || displayString(args.id);
     const role = displayString(args.role);
     const task = displayString(args.prompt);
+    const live = readSubagentCardLiveState(args);
+    const liveTags: MetaTag[] = live
+      ? [
+          { label: "phase", value: live.phase },
+          ...(typeof live.round === "number"
+            ? [{ label: "round", value: String(live.round) }]
+            : []),
+          ...(typeof live.toolCalls === "number"
+            ? [{ label: "tools", value: String(live.toolCalls) }]
+            : []),
+          ...(live.activeTool ? [{ label: "active", value: live.activeTool }] : []),
+        ]
+      : [];
 
     return (
       <div className="tool-expand flex flex-col gap-2">
@@ -261,6 +275,7 @@ export function ToolArgsDisplay({ item }: { item: ToolTraceItem }) {
             </div>
           </ToolSurface>
         ) : null}
+        {liveTags.length > 0 ? <MetaTags tags={liveTags} /> : null}
       </div>
     );
   }

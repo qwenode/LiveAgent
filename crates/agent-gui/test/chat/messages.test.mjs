@@ -1190,6 +1190,14 @@ test("subagent placeholders are built from complete structured agents before res
     ["search", "synthesis"],
   );
   assert.deepEqual(
+    placeholders.map((item) => item.arguments.phase),
+    ["queued", "queued"],
+  );
+  assert.deepEqual(
+    placeholders.map((item) => item.arguments.tool_calls),
+    [0, 0],
+  );
+  assert.deepEqual(
     placeholders.map((item) => item.arguments.parent_tool_call_id),
     ["call-agent", "call-agent"],
   );
