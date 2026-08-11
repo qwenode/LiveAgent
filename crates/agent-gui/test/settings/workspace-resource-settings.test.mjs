@@ -61,8 +61,10 @@ test("workspace and resource deletion paths clear workspace-scoped references", 
   assert.match(sharedSkillsHub, /skillNames: \[skillName\]/);
   assert.match(sharedMcpHub, /removeWorkspaceResourceReferences\(/);
   assert.match(sharedMcpHub, /mcpServerIds: \[serverConfig\.id\]/);
-  assert.match(sendRuntime, /change\.action !== "delete"/);
-  assert.match(sendRuntime, /skillNames: change\.names/);
+  assert.match(
+    sendRuntime,
+    /enableManagedSkills\(change\.names, effectiveSkillsSelection\.presetId\)/,
+  );
   assert.match(sendRuntime, /op\.kind === "remove"/);
   assert.match(sendRuntime, /mcpServerIds: removedIds/);
 });
