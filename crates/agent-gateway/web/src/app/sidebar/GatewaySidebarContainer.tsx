@@ -21,7 +21,7 @@ import { useSidebarSelector } from "@liveagent/ui/lib/sidebar/useSidebarSelector
 import { sortWorkspaceProjectsByActivity } from "@liveagent/ui/lib/workspaceProjects";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatHistorySummary } from "@/lib/chat/chatHistory";
-import type { WorkspaceProject } from "@/lib/settings";
+import { type WorkspaceProject, workspaceProjectPathKey } from "@/lib/settings";
 
 function selectMutations(snapshot: SidebarSnapshot) {
   return snapshot.mutations;
