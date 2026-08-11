@@ -379,7 +379,10 @@ export function useWorkspaceProjects(params: UseWorkspaceProjectsParams) {
       });
       const path = picked?.trim();
       if (!path) return;
-      activateWorkspaceProject(createWorkspaceProjectFromPath(path, "managed"));
+      setActiveView("chat");
+      activateWorkspaceProject(createWorkspaceProjectFromPath(path, "managed"), {
+        startConversation: true,
+      });
     } catch (error) {
       setErrorMessage(asErrorMessage(error, "选择项目目录失败"));
     }
@@ -387,6 +390,7 @@ export function useWorkspaceProjects(params: UseWorkspaceProjectsParams) {
     activateWorkspaceProject,
     activeWorkspaceProjectPath,
     cancelPendingWorkspaceConversationActionRef,
+    setActiveView,
     setErrorMessage,
     workdir,
   ]);
@@ -406,9 +410,12 @@ export function useWorkspaceProjects(params: UseWorkspaceProjectsParams) {
   const handleOpenClonedWorkspace = useCallback(
     (path: string) => {
       cancelPendingWorkspaceConversationActionRef.current();
-      activateWorkspaceProject(createWorkspaceProjectFromPath(path, "managed"));
+      setActiveView("chat");
+      activateWorkspaceProject(createWorkspaceProjectFromPath(path, "managed"), {
+        startConversation: true,
+      });
     },
-    [activateWorkspaceProject, cancelPendingWorkspaceConversationActionRef],
+    [activateWorkspaceProject, cancelPendingWorkspaceConversationActionRef, setActiveView],
   );
 
   const handleLoadWorkspaceRemoteBranches = useCallback(

@@ -117,6 +117,30 @@ test("project new conversation prepares, starts, then focuses after validation",
   ]);
 });
 
+test("newly added GUI workspaces immediately open a new conversation", () => {
+  const openedFolder = between(
+    workspaceProjectsSource,
+    "const handleOpenWorkspaceFolder = useCallback",
+    "const handleCloneWorkspaceProject",
+  );
+  assertInOrder(openedFolder, [
+    'setActiveView("chat");',
+    'activateWorkspaceProject(createWorkspaceProjectFromPath(path, "managed"), {',
+    "startConversation: true,",
+  ]);
+
+  const openedClone = between(
+    workspaceProjectsSource,
+    "const handleOpenClonedWorkspace = useCallback",
+    "const handleLoadWorkspaceRemoteBranches",
+  );
+  assertInOrder(openedClone, [
+    'setActiveView("chat");',
+    'activateWorkspaceProject(createWorkspaceProjectFromPath(path, "managed"), {',
+    "startConversation: true,",
+  ]);
+});
+
 test("shared startNewConversation remains free of focus side effects", () => {
   const sharedStart = between(
     historyActionsSource,

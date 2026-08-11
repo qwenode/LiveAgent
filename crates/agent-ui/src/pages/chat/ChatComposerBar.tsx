@@ -239,7 +239,6 @@ export type ChatComposerBarProps = {
   selectedValue?: string;
   onSelectModel: (selection: SelectedModel) => void;
   onSelectExecutionMode: (mode: "text" | "tools") => void;
-  onOpenSettings: (section?: "providers", providerId?: string) => void;
   chatRuntimeControls: ChatRuntimeControls;
   reasoningOptions: ReasoningLevel[];
   thinkingAlwaysOn: boolean;
@@ -253,7 +252,7 @@ export type ChatComposerBarProps = {
   onComposerBusyChange: (isBusy: boolean) => void;
   onChatRuntimeControlsChange: (patch: Partial<ChatRuntimeControls>) => void;
   onPickReadableFiles: () => void;
-  onPasteFiles: (files: File[]) => void;
+  onPasteFiles: (files: File[]) => void | Promise<void>;
   onLoadUploadedImagePreview?: UploadedImagePreviewLoader;
   /** Prompts previously sent in this conversation for ↑/↓ recall. */
   loadHistoryPrompts?: () => readonly string[];
@@ -289,7 +288,6 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
     selectedValue,
     onSelectModel,
     onSelectExecutionMode,
-    onOpenSettings,
     chatRuntimeControls,
     reasoningOptions,
     thinkingAlwaysOn,
@@ -1117,7 +1115,6 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
                 selectedValue={selectedValue}
                 onSelectModel={onSelectModel}
                 onSelectExecutionMode={onSelectExecutionMode}
-                onOpenSettings={onOpenSettings}
               />
 
               <GitBranchSelector

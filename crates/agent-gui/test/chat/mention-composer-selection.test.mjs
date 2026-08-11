@@ -16,8 +16,12 @@ test("the shared composer restores the last editor selection before external men
     const composer = source(root, "chat/MentionComposer.tsx");
     assert.match(composer, /lastEditorSelectionRef = useRef<Range \| null>\(null\)/);
     assert.match(composer, /document\.addEventListener\("selectionchange", rememberEditorSelection\)/);
+    const imperativeHandleStart = composer.indexOf("useImperativeHandle(");
+    const imperativeHandleEnd = composer.indexOf("// ---- Select suggestion ----", imperativeHandleStart);
+    assert.ok(imperativeHandleStart >= 0 && imperativeHandleEnd > imperativeHandleStart);
+    const imperativeHandle = composer.slice(imperativeHandleStart, imperativeHandleEnd);
     assert.equal(
-      (composer.match(/focusEditorAtSavedSelection\(\);/g) ?? []).length,
+      (imperativeHandle.match(/focusEditorAtSavedSelection\(\);/g) ?? []).length,
       5,
     );
   }
@@ -78,4 +82,28 @@ test("composer caret measurement never splits text nodes and restores the select
   );
   assert.match(scrollBodies[0], /measureComposerCaretRect\(range\)/);
   assert.doesNotMatch(scrollBodies[0], /cloneRange\(\)/);
+});
+
+test("pasted file imports restore the composer caret after the upload settles", () => {
+  const composer = source(sourceRoots[0], "chat/MentionComposer.tsx");
+  const restoreStart = composer.indexOf("const restoreFocusAfterPastedFiles = useCallback");
+  const pasteStart = composer.indexOf("const handlePaste = useCallback", restoreStart);
+  const pasteEnd = composer.indexOf("const handleCompositionStart = useCallback", pasteStart);
+  assert.ok(restoreStart >= 0 && pasteStart > restoreStart && pasteEnd > pasteStart);
+
+  const restoreBlock = composer.slice(restoreStart, pasteStart);
+  assert.match(restoreBlock, /window\.requestAnimationFrame/);
+  assert.match(restoreBlock, /document\.activeElement/);
+  assert.match(
+    restoreBlock,
+    /activeElement !== document\.body && activeElement !== editor/,
+  );
+  assert.match(restoreBlock, /focusEditorAtSavedSelection\(\)/);
+
+  const pasteBlock = composer.slice(pasteStart, pasteEnd);
+  assert.match(pasteBlock, /const importResult = onPasteFiles\?\.\(clipboardFiles\);/);
+  assert.match(
+    pasteBlock,
+    /Promise\.resolve\(importResult\)\.then\(\s*restoreFocusAfterPastedFiles,\s*restoreFocusAfterPastedFiles,/s,
+  );
 });

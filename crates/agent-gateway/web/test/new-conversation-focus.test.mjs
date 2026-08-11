@@ -58,6 +58,7 @@ test("Gateway project new conversation focuses only after the validated start pa
   );
   assertInOrder(projectActivation, [
     "if (options?.startConversation) {",
+    'setActiveView("chat");',
     "startNewConversation({",
     "focusComposerAfterConversationChange();",
   ]);
@@ -71,6 +72,28 @@ test("Gateway project new conversation focuses only after the validated start pa
     "if (!(await checkWorkspaceProjectDirectory(project))) {",
     "return;",
     "activateWorkspaceProject(project, { startConversation: true });",
+  ]);
+});
+
+test("Gateway newly added workspaces immediately open a new conversation", () => {
+  const openedClone = between(
+    gatewayAppSource,
+    "const handleOpenClonedWorkspace = useCallback",
+    "const handleLoadWorkspaceRemoteBranches",
+  );
+  assertInOrder(openedClone, [
+    'activateWorkspaceProject(createWorkspaceProjectFromPath(path, "managed"), {',
+    "startConversation: true,",
+  ]);
+
+  const pickedFolder = between(
+    gatewayAppSource,
+    "const handleWorkdirPickerSelect = useCallback",
+    "const commitWorkspaceProjectRename",
+  );
+  assertInOrder(pickedFolder, [
+    'activateWorkspaceProject(createWorkspaceProjectFromPath(normalizedPath, "managed"), {',
+    "startConversation: true,",
   ]);
 });
 

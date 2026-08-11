@@ -1442,7 +1442,9 @@ export default function GatewayApp() {
 
   const handleOpenClonedWorkspace = useCallback(
     (path: string) => {
-      activateWorkspaceProject(createWorkspaceProjectFromPath(path, "managed"));
+      activateWorkspaceProject(createWorkspaceProjectFromPath(path, "managed"), {
+        startConversation: true,
+      });
       void sidebarStore.refreshWorkdirs("new-workdir");
     },
     [activateWorkspaceProject, sidebarStore],
@@ -1460,7 +1462,9 @@ export default function GatewayApp() {
     (path: string) => {
       const normalizedPath = path.trim();
       if (!normalizedPath) return;
-      activateWorkspaceProject(createWorkspaceProjectFromPath(normalizedPath, "managed"));
+      activateWorkspaceProject(createWorkspaceProjectFromPath(normalizedPath, "managed"), {
+        startConversation: true,
+      });
       void sidebarStore.refreshWorkdirs("new-workdir");
     },
     [activateWorkspaceProject, sidebarStore],
@@ -5132,7 +5136,6 @@ export default function GatewayApp() {
                                 : prev;
                             })
                           }
-                          onOpenSettings={openSettings}
                           chatRuntimeControls={chatRuntimeControlsForCurrentProvider}
                           reasoningOptions={chatRuntimeReasoningOptions}
                           thinkingAlwaysOn={chatRuntimeThinkingAlwaysOn}

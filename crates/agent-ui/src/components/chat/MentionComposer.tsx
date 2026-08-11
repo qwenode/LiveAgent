@@ -207,7 +207,7 @@ export interface MentionComposerProps {
   /** Called only when empty/non-empty state flips. */
   onEmptyChange?: (isEmpty: boolean) => void;
   onBusyChange?: (isBusy: boolean) => void;
-  onPasteFiles?: (files: File[]) => void;
+  onPasteFiles?: (files: File[]) => void | Promise<void>;
   /**
    * Returns prompts previously sent in this conversation, oldest → newest.
    * Enables shell-style ↑/↓ recall while the caret sits on the first/last
@@ -3967,6 +3967,21 @@ export const MentionComposer = memo(
       [closeMentionSession, disabled, refreshEmptyState, refreshMention, resetPromptHistoryRecall],
     );
 
+    const restoreFocusAfterPastedFiles = useCallback(() => {
+      window.requestAnimationFrame(() => {
+        const editor = editorRef.current;
+        if (!editor) return;
+        const activeElement = document.activeElement;
+        if (activeElement && activeElement !== document.body && activeElement !== editor) return;
+
+        // Desktop temporarily disables contentEditable while importing files.
+        // Wait until the upload promise settles and React can re-enable the
+        // editor, then restore the saved caret without stealing another
+        // control's focus if the user moved on during the upload.
+        focusEditorAtSavedSelection();
+      });
+    }, [focusEditorAtSavedSelection]);
+
     const handlePaste = useCallback(
       (e: ClipboardEvent<HTMLDivElement>) => {
         if (disabled) {
@@ -3999,7 +4014,11 @@ export const MentionComposer = memo(
         const clipboardFiles = extractClipboardFiles(e.clipboardData);
         if (clipboardFiles.length > 0) {
           e.preventDefault();
-          onPasteFiles?.(clipboardFiles);
+          const importResult = onPasteFiles?.(clipboardFiles);
+          void Promise.resolve(importResult).then(
+            restoreFocusAfterPastedFiles,
+            restoreFocusAfterPastedFiles,
+          );
           return;
         }
         e.preventDefault();
@@ -4034,6 +4053,7 @@ export const MentionComposer = memo(
         refreshEmptyState,
         refreshMention,
         resetPromptHistoryRecall,
+        restoreFocusAfterPastedFiles,
       ],
     );
 

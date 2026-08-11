@@ -917,6 +917,9 @@ export function ToolResultDisplay({
     if (agent.mode === "worktree") {
       tags.push({ label: "mode", value: agent.mode });
     }
+    if (agent.taskType) {
+      tags.push({ label: "task", value: agent.taskType });
+    }
     if (shouldShowSubagentApplyStatus(agent) && agent.applyStatus) {
       tags.push({ label: "apply", value: agent.applyStatus });
     }
