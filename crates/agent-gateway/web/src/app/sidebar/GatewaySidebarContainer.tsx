@@ -341,10 +341,7 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
   const visibleWorkspaceFeeds = useMemo(() => {
     let filteredFeeds: Map<string, SidebarWorkspaceFeed> | null = null;
     for (const [pathKey, feed] of workspaceFeeds) {
-      if (
-        !feed.error ||
-        (!connectionLost && !isGatewayTransportErrorDetail(feed.errorDetail))
-      ) {
+      if (!feed.error || (!connectionLost && !isGatewayTransportErrorDetail(feed.errorDetail))) {
         continue;
       }
       filteredFeeds ??= new Map(workspaceFeeds);

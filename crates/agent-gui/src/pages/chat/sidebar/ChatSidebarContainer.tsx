@@ -3,12 +3,8 @@
 // ChatPage), the conversation-rename UI state, the delete flow, and the
 // error-code → i18n mapping. NOT mirrored — the web end has its own container.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChatHistorySidebar } from "@liveagent/ui/components/chat/ChatHistorySidebar";
 import { useLocale } from "@liveagent/ui/i18n/index";
-import type { AppUpdateController } from "../../../lib/appUpdates";
-import { normalizeConversationTitle } from "../../../lib/chat/page/chatPageHelpers";
-import { type WorkspaceProject, workspaceProjectPathKey } from "../../../lib/settings";
 import type { SidebarBatchDeleteOptions } from "@liveagent/ui/lib/sidebar/batchDelete";
 import { deleteSidebarConversations } from "@liveagent/ui/lib/sidebar/batchDelete";
 import {
@@ -24,12 +20,16 @@ import type { SidebarSnapshot, SidebarStore } from "@liveagent/ui/lib/sidebar/st
 import type { SidebarConversation } from "@liveagent/ui/lib/sidebar/types";
 import { useSidebarSelector } from "@liveagent/ui/lib/sidebar/useSidebarSelector";
 import { sortWorkspaceProjectsByActivity } from "@liveagent/ui/lib/workspaceProjects";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   DesktopSidebarBrand,
   DesktopSidebarTitleBar,
   DesktopSidebarUpdate,
   hideDesktopSidebarCloseButton,
 } from "../../../agent-ui-adapters/sidebarChrome";
+import type { AppUpdateController } from "../../../lib/appUpdates";
+import { normalizeConversationTitle } from "../../../lib/chat/page/chatPageHelpers";
+import { type WorkspaceProject, workspaceProjectPathKey } from "../../../lib/settings";
 import {
   moveConversationsToWorkspace,
   moveConversationToWorkspace,
@@ -176,7 +176,11 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
   }, [props.showProjects, store, workspaceFeedRefreshTargets]);
 
   useEffect(() => {
-    if (!props.showProjects || props.projectsCollapsed || expandedWorkspaceFeedTargets.length === 0) {
+    if (
+      !props.showProjects ||
+      props.projectsCollapsed ||
+      expandedWorkspaceFeedTargets.length === 0
+    ) {
       return;
     }
     void store.ensureWorkspaceFeeds(expandedWorkspaceFeedTargets);

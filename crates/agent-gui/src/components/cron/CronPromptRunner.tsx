@@ -62,7 +62,11 @@ function getActiveAgentPrompt(settings: AppSettings) {
   );
 }
 
-async function buildCronSkillsContext(settings: AppSettings, request: PromptRunRequest, workdir: string) {
+async function buildCronSkillsContext(
+  settings: AppSettings,
+  request: PromptRunRequest,
+  workdir: string,
+) {
   const resources = resolveWorkspaceResources(settings, workdir);
   const effective =
     resources.mode === "inherit"

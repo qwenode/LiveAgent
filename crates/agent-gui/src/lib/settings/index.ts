@@ -728,7 +728,6 @@ export function workspaceProjectPathKey(path: unknown): string {
     : normalizePosixProjectPathKey(normalizedPath);
 }
 
-
 function normalizeWorkspaceResourceSettingsMode(input: unknown): WorkspaceResourceSettingsMode {
   return input === "custom" || input === "off" ? input : "inherit";
 }
@@ -808,7 +807,6 @@ function compareWorkspaceResourcePathKeys(a: string, b: string): number {
   }
   return aCodePoints.length - bCodePoints.length;
 }
-
 
 export function normalizeWorkspaceProjectPathKeys(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
@@ -2820,7 +2818,6 @@ export function updateSkills(prev: AppSettings, patch: Partial<SkillsSettings>):
     },
   });
 }
-
 
 export function resolveWorkspaceResources(
   settings: AppSettings,

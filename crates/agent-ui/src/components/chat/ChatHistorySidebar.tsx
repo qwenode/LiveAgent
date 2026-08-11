@@ -1,4 +1,9 @@
 import { Tooltip } from "@base-ui/react";
+import {
+  DEFAULT_WORKSPACE_PROJECT_ID,
+  type WorkspaceProject,
+  workspaceProjectPathKey,
+} from "@liveagent/app/lib/settings";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   type CSSProperties,
@@ -6,8 +11,8 @@ import {
   memo,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -15,11 +20,6 @@ import {
   useState,
 } from "react";
 import { useLocale } from "../../i18n";
-import {
-  DEFAULT_WORKSPACE_PROJECT_ID,
-  type WorkspaceProject,
-  workspaceProjectPathKey,
-} from "@liveagent/app/lib/settings";
 import { cn } from "../../lib/shared/utils";
 import type {
   SidebarBatchDeleteOptions,
@@ -1707,10 +1707,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
     if (sectionsDisabled) return;
     const pathKey = workspaceProjectPathKey(project.path);
     if (!pathKey) return;
-    onWorkspaceProjectCollapsedChange?.(
-      project,
-      !collapsedWorkspaceProjectPathKeys.has(pathKey),
-    );
+    onWorkspaceProjectCollapsedChange?.(project, !collapsedWorkspaceProjectPathKeys.has(pathKey));
   });
   const handleStartRenaming = useStableEvent((item: SidebarConversation) => {
     if (!sectionsDisabled) {
@@ -2487,9 +2484,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
         isMobileMenuLayout={isMobileMenuLayout}
         renameDraft={renamingId === item.id ? renameDraft : ""}
         onSelectConversation={
-          project
-            ? (id) => handleSelectProjectConversation(project, id)
-            : handleSelectConversation
+          project ? (id) => handleSelectProjectConversation(project, id) : handleSelectConversation
         }
         onStartRenaming={handleStartRenaming}
         onRenameDraftChange={handleRenameDraftChange}
@@ -3080,295 +3075,295 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
             <div
               ref={recentHeaderRef}
               className={cn(
-              "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-2 pb-2",
-              showProjects ? "border-t border-border/35 pt-0.5" : "pt-3",
-            )}
-          >
-            {selectionMode ? (
-              <div
-                role="status"
-                aria-live="polite"
-                className="flex min-w-0 items-center gap-1.5 px-3 py-1 text-xs font-semibold text-foreground/85"
-              >
-                <ListChecks className="h-3.5 w-3.5 shrink-0" />
-                <span className="min-w-0 truncate">
-                  {t("chat.conversationBulkSelectedCount").replace(
-                    "{count}",
-                    String(selectedConversationIds.size),
-                  )}
-                </span>
-              </div>
-            ) : showProjects ? (
-              <span aria-hidden="true" />
-            ) : (
-              <button
-                type="button"
-                aria-expanded={!recentCollapsed}
-                className="group flex min-w-0 items-center gap-1 rounded-md px-3 py-1 text-xs font-semibold text-muted-foreground outline-hidden"
-                onClick={handleRecentCollapsedChange}
-                disabled={sectionsDisabled}
-              >
-                <span className="min-w-0 truncate">{t("chat.recentConversation")}</span>
-                <ChevronRight
-                  aria-hidden="true"
-                  className="h-3.5 w-3.5 shrink-0 opacity-0 transition-[opacity,transform] duration-300 ease-in-out group-hover:opacity-100"
-                  style={{ transform: `rotate(${recentCollapsed ? 0 : 90}deg)` }}
-                />
-              </button>
-            )}
-            <div className="flex items-center gap-1.5">
+                "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-2 pb-2",
+                showProjects ? "border-t border-border/35 pt-0.5" : "pt-3",
+              )}
+            >
               {selectionMode ? (
-                <>
-                  <DropdownMenu
-                    open={bulkMoveMenuOpen}
-                    onOpenChange={(open) => {
-                      if (!sectionsDisabled || !open) {
-                        setBulkMoveMenuOpen(open);
-                      }
-                    }}
-                  >
-                    <DropdownMenuTrigger
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="flex min-w-0 items-center gap-1.5 px-3 py-1 text-xs font-semibold text-foreground/85"
+                >
+                  <ListChecks className="h-3.5 w-3.5 shrink-0" />
+                  <span className="min-w-0 truncate">
+                    {t("chat.conversationBulkSelectedCount").replace(
+                      "{count}",
+                      String(selectedConversationIds.size),
+                    )}
+                  </span>
+                </div>
+              ) : showProjects ? (
+                <span aria-hidden="true" />
+              ) : (
+                <button
+                  type="button"
+                  aria-expanded={!recentCollapsed}
+                  className="group flex min-w-0 items-center gap-1 rounded-md px-3 py-1 text-xs font-semibold text-muted-foreground outline-hidden"
+                  onClick={handleRecentCollapsedChange}
+                  disabled={sectionsDisabled}
+                >
+                  <span className="min-w-0 truncate">{t("chat.recentConversation")}</span>
+                  <ChevronRight
+                    aria-hidden="true"
+                    className="h-3.5 w-3.5 shrink-0 opacity-0 transition-[opacity,transform] duration-300 ease-in-out group-hover:opacity-100"
+                    style={{ transform: `rotate(${recentCollapsed ? 0 : 90}deg)` }}
+                  />
+                </button>
+              )}
+              <div className="flex items-center gap-1.5">
+                {selectionMode ? (
+                  <>
+                    <DropdownMenu
+                      open={bulkMoveMenuOpen}
+                      onOpenChange={(open) => {
+                        if (!sectionsDisabled || !open) {
+                          setBulkMoveMenuOpen(open);
+                        }
+                      }}
+                    >
+                      <DropdownMenuTrigger
+                        type="button"
+                        disabled={
+                          sectionsDisabled ||
+                          selectedConversationIds.size === 0 ||
+                          isBulkDeleting ||
+                          isBulkMoving ||
+                          activeProjects.length === 0
+                        }
+                        className={cn(
+                          PROJECT_ICON_BUTTON_CLASS,
+                          "inline-flex items-center justify-center",
+                          "disabled:pointer-events-none disabled:opacity-50",
+                        )}
+                        title={t("chat.conversationMoveToWorkspace")}
+                        aria-label={t("chat.conversationMoveToWorkspace")}
+                      >
+                        {isBulkMoving ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Folder className="h-3.5 w-3.5" />
+                        )}
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        side="top"
+                        align="start"
+                        collisionPadding={12}
+                        className="sidebar-context-menu max-h-[18rem] min-w-[12rem] overflow-y-auto rounded-xl border-border/60 bg-background/95 backdrop-blur-xl"
+                      >
+                        {activeProjects.map((workspace) => (
+                          <DropdownMenuItem
+                            key={workspace.id}
+                            onSelect={() => void handleBulkMove(workspace.path)}
+                            className="gap-2"
+                          >
+                            <FolderClosed className="h-3.5 w-3.5 shrink-0" />
+                            <span className="truncate">{workspace.path}</span>
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleBulkDelete}
                       disabled={
                         sectionsDisabled ||
                         selectedConversationIds.size === 0 ||
                         isBulkDeleting ||
-                        isBulkMoving ||
-                        activeProjects.length === 0
+                        isBulkMoving
                       }
-                      className={cn(
-                        PROJECT_ICON_BUTTON_CLASS,
-                        "inline-flex items-center justify-center",
-                        "disabled:pointer-events-none disabled:opacity-50",
-                      )}
-                      title={t("chat.conversationMoveToWorkspace")}
-                      aria-label={t("chat.conversationMoveToWorkspace")}
+                      className={cn(PROJECT_ICON_BUTTON_CLASS, "text-destructive")}
+                      title={t("chat.conversationBulkDelete")}
+                      aria-label={t("chat.conversationBulkDelete")}
                     >
-                      {isBulkMoving ? (
+                      {isBulkDeleting ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
-                        <Folder className="h-3.5 w-3.5" />
+                        <Trash2 className="h-3.5 w-3.5" />
                       )}
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      side="top"
-                      align="start"
-                      collisionPadding={12}
-                      className="sidebar-context-menu max-h-[18rem] min-w-[12rem] overflow-y-auto rounded-xl border-border/60 bg-background/95 backdrop-blur-xl"
-                    >
-                      {activeProjects.map((workspace) => (
-                        <DropdownMenuItem
-                          key={workspace.id}
-                          onSelect={() => void handleBulkMove(workspace.path)}
-                          className="gap-2"
-                        >
-                          <FolderClosed className="h-3.5 w-3.5 shrink-0" />
-                          <span className="truncate">{workspace.path}</span>
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={handleBulkDelete}
-                    disabled={
-                      sectionsDisabled ||
-                      selectedConversationIds.size === 0 ||
-                      isBulkDeleting ||
-                      isBulkMoving
-                    }
-                    className={cn(PROJECT_ICON_BUTTON_CLASS, "text-destructive")}
-                    title={t("chat.conversationBulkDelete")}
-                    aria-label={t("chat.conversationBulkDelete")}
-                  >
-                    {isBulkDeleting ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-3.5 w-3.5" />
-                    )}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={exitSelectionMode}
-                    className={PROJECT_ICON_BUTTON_CLASS}
-                    title={t("chat.cancel")}
-                    aria-label={t("chat.cancel")}
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </Button>
-                </>
-              ) : (
-                <>
-                  {!showProjects && listStatus === "syncing" ? (
-                    <span
-                      role="status"
-                      aria-live="polite"
-                      className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/[0.06] px-2 py-0.5 text-[calc(10.5px*var(--zone-font-scale,1))] font-medium text-primary/80"
-                    >
-                      <span className="relative flex h-1.5 w-1.5 shrink-0" aria-hidden="true">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/35 opacity-75" />
-                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary/70" />
-                      </span>
-                      {t("chat.history.syncing")}
-                    </span>
-                  ) : null}
-                  {!showProjects ? (
-                    <span
-                      role={errorMessage ? "status" : undefined}
-                      title={
-                        errorMessage
-                          ? `${t("chat.historyReadFailed")}: ${errorMessage}`
-                          : String(totalItems)
-                      }
-                      className={cn(
-                        "flex h-6 min-w-6 items-center justify-center rounded-full border px-1.5 text-[calc(10.5px*var(--zone-font-scale,1))] font-medium tabular-nums",
-                        errorMessage
-                          ? "border-destructive/25 bg-destructive/10 text-destructive"
-                          : "border-border/50 bg-foreground/[0.04] text-muted-foreground",
-                      )}
-                    >
-                      {errorMessage ? (
-                        <AlertCircle
-                          className="h-3.5 w-3.5 shrink-0"
-                          aria-label={t("chat.historyReadFailed")}
-                        />
-                      ) : (
-                        totalItems
-                      )}
-                    </span>
-                  ) : null}
-                  {visibleConversationItems.length > 0 ? (
+                    </Button>
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon"
-                      onClick={() => enterSelectionMode()}
-                      disabled={sectionsDisabled || selectableConversationIds.size === 0}
+                      onClick={exitSelectionMode}
                       className={PROJECT_ICON_BUTTON_CLASS}
-                      title={t("chat.conversationBulkSelectHint")}
-                      aria-label={t("chat.conversationBulkSelect")}
-                    >
-                      <ListChecks className="h-3.5 w-3.5" />
-                    </Button>
-                  ) : null}
-                  {canShareConversations ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={handleOpenSharedConversations}
-                      disabled={sectionsDisabled}
-                      className={PROJECT_ICON_BUTTON_CLASS}
-                      title={t("chat.manageSharedConversations").replace(
-                        "{count}",
-                        String(sharedConversationCount),
-                      )}
-                      aria-label={t("chat.manageSharedConversations").replace(
-                        "{count}",
-                        String(sharedConversationCount),
-                      )}
-                    >
-                      <Share2 className="h-3.5 w-3.5" />
-                    </Button>
-                  ) : null}
-                </>
-              )}
-            </div>
-          </div>
-          ) : null}
-
-          {!showProjects ? (
-            <div
-            aria-hidden={recentCollapsed}
-            inert={recentCollapsed}
-            className={cn(
-              "flex min-h-0 flex-col transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none",
-              recentCollapsed
-                ? "pointer-events-none -translate-y-2 opacity-0"
-                : "translate-y-0 opacity-100",
-            )}
-          >
-            {/* Read failures surface as the red count badge in the section
-                header. Mutation/project errors keep their own message surface
-                and never replace or relabel the successfully loaded rows. */}
-            {actionErrorMessage ? (
-              <div className="shrink-0 px-2 pb-2">
-                <div
-                  role="alert"
-                  title={actionErrorMessage}
-                  className="flex items-start gap-2 rounded-xl border border-destructive/25 bg-destructive/10 px-3 py-2 text-[calc(11px*var(--zone-font-scale,1))] leading-4 text-destructive"
-                >
-                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span className="min-w-0 flex-1 break-words">{actionErrorMessage}</span>
-                  {onDismissActionError ? (
-                    <button
-                      type="button"
-                      onClick={onDismissActionError}
-                      className="shrink-0 rounded-md p-0.5 text-destructive/70 hover:bg-destructive/10 hover:text-destructive"
                       title={t("chat.cancel")}
                       aria-label={t("chat.cancel")}
                     >
                       <X className="h-3.5 w-3.5" />
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-            <div
-              ref={historyScrollRef}
-              aria-busy={listStatus === "loading" || listStatus === "syncing" || isLoadingMore}
-              className="chat-history-list min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-3"
-            >
-              {items.length > 0 ? (
-                <div
-                  key={scopeKey || "scope"}
-                  className="chat-history-scope-enter relative"
-                  style={{ height: historyVirtualizer.getTotalSize() }}
-                >
-                  {virtualHistoryRows.map((virtualRow) => {
-                    const item = items[virtualRow.index];
-                    if (!item) return null;
-
-                    return (
-                      <div
-                        key={virtualRow.key}
-                        data-index={virtualRow.index}
-                        ref={historyVirtualizer.measureElement}
-                        className="absolute inset-x-0 top-0 pb-0.5"
-                        style={{ transform: `translateY(${virtualRow.start}px)` }}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    {!showProjects && listStatus === "syncing" ? (
+                      <span
+                        role="status"
+                        aria-live="polite"
+                        className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/[0.06] px-2 py-0.5 text-[calc(10.5px*var(--zone-font-scale,1))] font-medium text-primary/80"
                       >
-                        {virtualRow.index === firstUnpinnedHistoryIndex ? (
-                          <div
-                            aria-hidden="true"
-                            className="mx-2 mb-1.5 mt-1 h-px bg-gradient-to-r from-border/80 via-border/45 to-transparent"
+                        <span className="relative flex h-1.5 w-1.5 shrink-0" aria-hidden="true">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/35 opacity-75" />
+                          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary/70" />
+                        </span>
+                        {t("chat.history.syncing")}
+                      </span>
+                    ) : null}
+                    {!showProjects ? (
+                      <span
+                        role={errorMessage ? "status" : undefined}
+                        title={
+                          errorMessage
+                            ? `${t("chat.historyReadFailed")}: ${errorMessage}`
+                            : String(totalItems)
+                        }
+                        className={cn(
+                          "flex h-6 min-w-6 items-center justify-center rounded-full border px-1.5 text-[calc(10.5px*var(--zone-font-scale,1))] font-medium tabular-nums",
+                          errorMessage
+                            ? "border-destructive/25 bg-destructive/10 text-destructive"
+                            : "border-border/50 bg-foreground/[0.04] text-muted-foreground",
+                        )}
+                      >
+                        {errorMessage ? (
+                          <AlertCircle
+                            className="h-3.5 w-3.5 shrink-0"
+                            aria-label={t("chat.historyReadFailed")}
                           />
-                        ) : null}
-                        {renderHistoryRow(item)}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : listStatus === "loading" || listStatus === "initial" ? (
-                <HistoryListLoadingSkeleton />
-              ) : listStatus === "ready" && !errorMessage ? (
-                <div className="chat-history-scope-enter flex items-center justify-center px-4 py-8 text-center">
-                  <p className="text-xs font-medium text-muted-foreground/60">
-                    {t("chat.emptyChatHistory")}
-                  </p>
-                </div>
-              ) : null}
-              {items.length > 0 && (hasMore || isLoadingMore) ? (
-                <div className="px-2 pb-2 pt-1 text-center text-[calc(11px*var(--zone-font-scale,1))] leading-5 text-muted-foreground/70">
-                  {isLoadingMore
-                    ? t("sidebar.loadingMoreHistory")
-                    : t("sidebar.continueLoadingHistory")}
-                </div>
-              ) : null}
+                        ) : (
+                          totalItems
+                        )}
+                      </span>
+                    ) : null}
+                    {visibleConversationItems.length > 0 ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => enterSelectionMode()}
+                        disabled={sectionsDisabled || selectableConversationIds.size === 0}
+                        className={PROJECT_ICON_BUTTON_CLASS}
+                        title={t("chat.conversationBulkSelectHint")}
+                        aria-label={t("chat.conversationBulkSelect")}
+                      >
+                        <ListChecks className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
+                    {canShareConversations ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleOpenSharedConversations}
+                        disabled={sectionsDisabled}
+                        className={PROJECT_ICON_BUTTON_CLASS}
+                        title={t("chat.manageSharedConversations").replace(
+                          "{count}",
+                          String(sharedConversationCount),
+                        )}
+                        aria-label={t("chat.manageSharedConversations").replace(
+                          "{count}",
+                          String(sharedConversationCount),
+                        )}
+                      >
+                        <Share2 className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
+                  </>
+                )}
+              </div>
             </div>
+          ) : null}
+
+          {!showProjects ? (
+            <div
+              aria-hidden={recentCollapsed}
+              inert={recentCollapsed}
+              className={cn(
+                "flex min-h-0 flex-col transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none",
+                recentCollapsed
+                  ? "pointer-events-none -translate-y-2 opacity-0"
+                  : "translate-y-0 opacity-100",
+              )}
+            >
+              {/* Read failures surface as the red count badge in the section
+                header. Mutation/project errors keep their own message surface
+                and never replace or relabel the successfully loaded rows. */}
+              {actionErrorMessage ? (
+                <div className="shrink-0 px-2 pb-2">
+                  <div
+                    role="alert"
+                    title={actionErrorMessage}
+                    className="flex items-start gap-2 rounded-xl border border-destructive/25 bg-destructive/10 px-3 py-2 text-[calc(11px*var(--zone-font-scale,1))] leading-4 text-destructive"
+                  >
+                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span className="min-w-0 flex-1 break-words">{actionErrorMessage}</span>
+                    {onDismissActionError ? (
+                      <button
+                        type="button"
+                        onClick={onDismissActionError}
+                        className="shrink-0 rounded-md p-0.5 text-destructive/70 hover:bg-destructive/10 hover:text-destructive"
+                        title={t("chat.cancel")}
+                        aria-label={t("chat.cancel")}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+              <div
+                ref={historyScrollRef}
+                aria-busy={listStatus === "loading" || listStatus === "syncing" || isLoadingMore}
+                className="chat-history-list min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-3"
+              >
+                {items.length > 0 ? (
+                  <div
+                    key={scopeKey || "scope"}
+                    className="chat-history-scope-enter relative"
+                    style={{ height: historyVirtualizer.getTotalSize() }}
+                  >
+                    {virtualHistoryRows.map((virtualRow) => {
+                      const item = items[virtualRow.index];
+                      if (!item) return null;
+
+                      return (
+                        <div
+                          key={virtualRow.key}
+                          data-index={virtualRow.index}
+                          ref={historyVirtualizer.measureElement}
+                          className="absolute inset-x-0 top-0 pb-0.5"
+                          style={{ transform: `translateY(${virtualRow.start}px)` }}
+                        >
+                          {virtualRow.index === firstUnpinnedHistoryIndex ? (
+                            <div
+                              aria-hidden="true"
+                              className="mx-2 mb-1.5 mt-1 h-px bg-gradient-to-r from-border/80 via-border/45 to-transparent"
+                            />
+                          ) : null}
+                          {renderHistoryRow(item)}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : listStatus === "loading" || listStatus === "initial" ? (
+                  <HistoryListLoadingSkeleton />
+                ) : listStatus === "ready" && !errorMessage ? (
+                  <div className="chat-history-scope-enter flex items-center justify-center px-4 py-8 text-center">
+                    <p className="text-xs font-medium text-muted-foreground/60">
+                      {t("chat.emptyChatHistory")}
+                    </p>
+                  </div>
+                ) : null}
+                {items.length > 0 && (hasMore || isLoadingMore) ? (
+                  <div className="px-2 pb-2 pt-1 text-center text-[calc(11px*var(--zone-font-scale,1))] leading-5 text-muted-foreground/70">
+                    {isLoadingMore
+                      ? t("sidebar.loadingMoreHistory")
+                      : t("sidebar.continueLoadingHistory")}
+                  </div>
+                ) : null}
+              </div>
             </div>
           ) : null}
         </div>

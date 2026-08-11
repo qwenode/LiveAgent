@@ -308,7 +308,8 @@ export function createSidebarStore(
         (previous === undefined && wasListed);
       const nextCounted = nextPathKey === pathKey && next?.isPending !== true;
       const rest = workspaceFeedRows(feed).filter((item) => item.id !== conversationId);
-      const rows = nextPathKey === pathKey && next ? sortSidebarConversations([next, ...rest]) : rest;
+      const rows =
+        nextPathKey === pathKey && next ? sortSidebarConversations([next, ...rest]) : rest;
       const totalCount = Math.max(
         persistedCount(rows),
         feed.totalCount + Number(nextCounted) - Number(previousCounted),
@@ -1018,9 +1019,7 @@ export function createSidebarStore(
         listErrorDetail: null,
       });
       pruneOrphanedConversations(
-        snapshot.conversations
-          .map((item) => item.id)
-          .filter((id) => !reconciledIds.has(id)),
+        snapshot.conversations.map((item) => item.id).filter((id) => !reconciledIds.has(id)),
         workspaceFeeds,
         reconciled,
       );
@@ -1462,9 +1461,12 @@ export function createSidebarStore(
       byId = new Map(byId);
       byId.delete(conversationId);
       const workspaceFeeds = updateWorkspaceFeedsForConversation(previous, undefined);
-      commitScopedList(snapshot.conversations.filter((item) => item.id !== conversationId), {
-        workspaceFeeds,
-      });
+      commitScopedList(
+        snapshot.conversations.filter((item) => item.id !== conversationId),
+        {
+          workspaceFeeds,
+        },
+      );
     },
 
     applyRunningPatch: (patch) => {

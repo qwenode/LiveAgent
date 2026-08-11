@@ -3204,10 +3204,7 @@ export default function GatewayApp() {
   const handleSidebarSelectConversationRef = useRef(handleSidebarSelectConversation);
   handleSidebarSelectConversationRef.current = handleSidebarSelectConversation;
 
-  async function handleSidebarSelectWorkspaceConversation(
-    project: WorkspaceProject,
-    id: string,
-  ) {
+  async function handleSidebarSelectWorkspaceConversation(project: WorkspaceProject, id: string) {
     const conversationId = id.trim();
     const targetPathKey = workspaceProjectPathKey(project.path);
     if (!conversationId || !targetPathKey) return;
@@ -4822,9 +4819,7 @@ export default function GatewayApp() {
               isLocalDraftConversationId={isLocalDraftConversationId}
               onProjectsCollapsedChange={handleSidebarProjectsCollapsedChange}
               onRecentCollapsedChange={handleSidebarRecentCollapsedChange}
-              onWorkspaceProjectCollapsedChange={
-                handleSidebarWorkspaceProjectCollapsedChange
-              }
+              onWorkspaceProjectCollapsedChange={handleSidebarWorkspaceProjectCollapsedChange}
               onCreateProject={handleOpenCreateWorkspaceProject}
               onSelectProject={handleSelectWorkspaceProject}
               onNewConversationForProject={handleNewConversationForProject}
@@ -5365,7 +5360,7 @@ export default function GatewayApp() {
             />
           ) : null}
 
-                    {resourceSettingsProject ? (
+          {resourceSettingsProject ? (
             <WorkspaceResourceSettingsDrawer
               project={resourceSettingsProject}
               settings={settings}
@@ -5380,7 +5375,7 @@ export default function GatewayApp() {
             />
           ) : null}
 
-{settingsOpen ? (
+          {settingsOpen ? (
             <div
               className={`gateway-settings-overlay ${
                 overlay === "open" ? "gateway-settings-overlay-open" : ""

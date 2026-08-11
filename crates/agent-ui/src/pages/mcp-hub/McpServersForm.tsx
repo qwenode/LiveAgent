@@ -15,8 +15,8 @@ import {
 import {
   type AppSettings,
   type McpServerConfig,
-  type ToolPolicy,
   removeWorkspaceResourceReferences,
+  type ToolPolicy,
   updateMcp,
   updateSystem,
 } from "@liveagent/app/lib/settings/index";

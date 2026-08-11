@@ -574,7 +574,6 @@ function mergeSyncedSystemProxy(
   };
 }
 
-
 function mergeSyncedWorkspaceResourceSettings(
   current: AppSettings["system"]["workspaceResourceSettings"],
   incoming: unknown,
