@@ -642,6 +642,33 @@ test("upsertLocal and removeLocal manage pending drafts", async () => {
   store.stop();
 });
 
+test("upsertLocal keeps a persisted title when an active-view pending fallback arrives", async () => {
+  const fake = createFakeBackend();
+  fake.state.pages.set("cwd:/tmp/a", [
+    conversation("persisted", { cwd: "/tmp/a", title: "Real title", updatedAt: 10 }),
+  ]);
+  const store = createSidebarStore(fake.backend);
+  store.setScope(SCOPE_A);
+  store.start();
+  await tick();
+
+  store.upsertLocal(
+    conversation("persisted", {
+      cwd: "/tmp/a",
+      title: "新对话",
+      updatedAt: 20,
+      isPending: true,
+    }),
+  );
+
+  const item = store.peek("persisted");
+  assert.equal(item.title, "Real title");
+  assert.equal(item.updatedAt, 10);
+  assert.equal(item.isPending, undefined);
+  assert.equal(store.getSnapshot().totalCount, 1);
+  store.stop();
+});
+
 test("workspace feeds isolate rows and grow 5 then 15 then 25 without dropping cached rows", async () => {
   const fake = createFakeBackend();
   const rowsA = conversationRange("a", "/tmp/a", 30);

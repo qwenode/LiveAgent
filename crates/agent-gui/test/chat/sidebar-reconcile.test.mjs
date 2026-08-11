@@ -62,6 +62,18 @@ test("merge clears isPending when the persisted upsert arrives", () => {
   assert.equal(merged.isPending, undefined);
 });
 
+test("merge never downgrades a persisted row to a pending fallback", () => {
+  const persisted = conversation("one", { title: "Real title", updatedAt: 10 });
+  const merged = reconcile.mergeSidebarConversation(
+    persisted,
+    conversation("one", { title: "新对话", updatedAt: 20, isPending: true }),
+  );
+
+  assert.equal(merged, persisted);
+  assert.equal(merged.title, "Real title");
+  assert.equal(merged.isPending, undefined);
+});
+
 test("reconcile drops server-absent rows when the page covers the scope", () => {
   const current = [
     conversation("keep", { updatedAt: 30 }),

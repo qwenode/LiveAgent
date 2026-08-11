@@ -104,6 +104,13 @@ export function mergeSidebarConversation(
     return next;
   }
 
+  // A pending row represents a not-yet-persisted draft. Once an id has a
+  // persisted sidebar record, a transient active-view fallback must never
+  // downgrade it back to pending or replace its real title with "新对话".
+  if (existing.isPending !== true && next.isPending === true) {
+    return existing;
+  }
+
   const merged: SidebarConversation = {
     ...existing,
     ...next,
