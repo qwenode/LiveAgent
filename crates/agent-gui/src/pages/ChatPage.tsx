@@ -2010,21 +2010,7 @@ export function ChatPage(props: ChatPageProps) {
             } as CSSProperties
           }
           chat={{
-            onSelectExecutionMode: (mode) =>
-              setSettings((prev) => {
-                const current = prev.system.executionMode;
-                if (mode === "text") {
-                  return current === "text" ? prev : updateSystem(prev, { executionMode: "text" });
-                }
-                // 切回 Agent：仅从 Chat 切换；agent-dev 视为 Agent，保持不降级。
-                return current === "text" ? updateSystem(prev, { executionMode: "tools" }) : prev;
-              }),
-            hasModels,
-            currentModelLabel,
-            modelOptions,
-            selectedValue,
             sidebarOpen,
-            onSelectModel: handleSelectModel,
             onOpenSettings,
             onToggleTheme,
             onOpenSidebar: handleOpenSidebar,
@@ -2105,6 +2091,27 @@ export function ChatPage(props: ChatPageProps) {
                   workdir={displayedConversationWorkdir}
                   enabledSkills={enabledComposerSkills}
                   isAgentMode={isAgentMode}
+                  executionMode={settings.system.executionMode}
+                  hasModels={hasModels}
+                  currentModelLabel={currentModelLabel}
+                  modelOptions={modelOptions}
+                  selectedValue={selectedValue}
+                  onSelectModel={handleSelectModel}
+                  onSelectExecutionMode={(mode) =>
+                    setSettings((prev) => {
+                      const current = prev.system.executionMode;
+                      if (mode === "text") {
+                        return current === "text"
+                          ? prev
+                          : updateSystem(prev, { executionMode: "text" });
+                      }
+                      // 切回 Agent：仅从 Chat 切换；agent-dev 视为 Agent，保持不降级。
+                      return current === "text"
+                        ? updateSystem(prev, { executionMode: "tools" })
+                        : prev;
+                    })
+                  }
+                  onOpenSettings={onOpenSettings}
                   chatRuntimeControls={chatRuntimeControlsForCurrentProvider}
                   reasoningOptions={chatRuntimeReasoningOptions}
                   thinkingAlwaysOn={chatRuntimeThinkingAlwaysOn}

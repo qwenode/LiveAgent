@@ -2,15 +2,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const headerSources = [
+const modelSelectorSources = [
   readFileSync(
-    new URL("../../../agent-ui/src/components/chat/ChatHeader.tsx", import.meta.url),
+    new URL("../../../agent-ui/src/components/chat/ChatModelSelector.tsx", import.meta.url),
     "utf8",
   ),
 ];
 
 test("model pickers use popover semantics instead of menu semantics", () => {
-  for (const source of headerSources) {
+  for (const source of modelSelectorSources) {
     assert.match(source, /import \{ Popover \} from "@base-ui\/react"/);
     assert.match(source, /<Popover\.Root open=\{isModelPickerOpen\}/);
     assert.match(source, /<Popover\.Popup/);
@@ -20,7 +20,7 @@ test("model pickers use popover semantics instead of menu semantics", () => {
 });
 
 test("execution mode switchers expose a native radio group", () => {
-  for (const source of headerSources) {
+  for (const source of modelSelectorSources) {
     assert.match(source, /role="radiogroup"/);
     assert.match(source, /aria-label=\{t\("settings\.executionMode"\)\}/);
     assert.equal((source.match(/type="radio"/g) ?? []).length, 2);
@@ -33,7 +33,7 @@ test("execution mode switchers expose a native radio group", () => {
 });
 
 test("popover interactions preserve mode changes and close after model selection", () => {
-  for (const source of headerSources) {
+  for (const source of modelSelectorSources) {
     assert.match(source, /onClick=\{\(\) => toggleGroup\(group\.id\)\}/);
     assert.match(source, /aria-pressed=\{isSelected\}/);
     assert.match(source, /onSelectModel\(parsed\);\s+setIsModelPickerOpen\(false\);/);
@@ -41,7 +41,7 @@ test("popover interactions preserve mode changes and close after model selection
 });
 
 test("model pickers search models and providers", () => {
-  for (const source of headerSources) {
+  for (const source of modelSelectorSources) {
     assert.match(source, /initialFocus=\{searchInputRef\}/);
     assert.match(source, /placeholder=\{t\("chat\.searchModel"\)\}/);
     assert.match(source, /\w+\.model\.toLowerCase\(\)\.includes\(normalizedSearch\)/);
@@ -51,7 +51,7 @@ test("model pickers search models and providers", () => {
 });
 
 test("provider groups reveal the edit affordance before the count on hover", () => {
-  for (const source of headerSources) {
+  for (const source of modelSelectorSources) {
     assert.match(source, /\bPencil\b/);
     assert.match(source, /t\("settings\.editProvider"\)/);
     assert.doesNotMatch(source, /title=\{`\$\{t\("settings\.editProvider"\)/);

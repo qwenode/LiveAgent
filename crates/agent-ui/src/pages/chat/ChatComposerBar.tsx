@@ -18,11 +18,15 @@ import {
   SquarePen,
   Trash2,
 } from "@liveagent/app/components/icons";
+import type { ModelOption } from "@liveagent/app/lib/providers/llm";
 import {
+  type AppSettings,
   type ChatRuntimeControls,
   DEFAULT_CHAT_RUNTIME_CONTROLS,
   type ReasoningLevel,
+  type SelectedModel,
 } from "@liveagent/app/lib/settings";
+import { ChatModelSelector } from "@liveagent/ui/components/chat/ChatModelSelector";
 import { ComposerAttachmentCard } from "@liveagent/ui/components/chat/ComposerAttachmentCard";
 import { getUploadedFileTypeIcon } from "@liveagent/ui/components/chat/fileTypeIcons";
 import {
@@ -228,6 +232,14 @@ export type ChatComposerBarProps = {
   workdir: string;
   enabledSkills: MentionComposerSkill[];
   isAgentMode: boolean;
+  executionMode: AppSettings["system"]["executionMode"];
+  hasModels: boolean;
+  currentModelLabel: string;
+  modelOptions: ModelOption[];
+  selectedValue?: string;
+  onSelectModel: (selection: SelectedModel) => void;
+  onSelectExecutionMode: (mode: "text" | "tools") => void;
+  onOpenSettings: (section?: "providers", providerId?: string) => void;
   chatRuntimeControls: ChatRuntimeControls;
   reasoningOptions: ReasoningLevel[];
   thinkingAlwaysOn: boolean;
@@ -270,6 +282,14 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
     workdir,
     enabledSkills,
     isAgentMode,
+    executionMode,
+    hasModels,
+    currentModelLabel,
+    modelOptions,
+    selectedValue,
+    onSelectModel,
+    onSelectExecutionMode,
+    onOpenSettings,
     chatRuntimeControls,
     reasoningOptions,
     thinkingAlwaysOn,
@@ -1088,6 +1108,17 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
                   </Select>
                 </div>
               ) : null}
+
+              <ChatModelSelector
+                executionMode={executionMode}
+                hasModels={hasModels}
+                currentModelLabel={currentModelLabel}
+                modelOptions={modelOptions}
+                selectedValue={selectedValue}
+                onSelectModel={onSelectModel}
+                onSelectExecutionMode={onSelectExecutionMode}
+                onOpenSettings={onOpenSettings}
+              />
 
               <GitBranchSelector
                 workdir={workdir}
