@@ -34,9 +34,15 @@ html[data-liveagent-webui="gateway"] .model-selector-item {
   font-family: var(--app-font-family);
 }
 
+html[data-liveagent-webui="gateway"] .model-selector-trigger {
+  min-width: 0;
+  max-width: 12rem;
+  flex-shrink: 1;
+}
+
 html[data-liveagent-webui="gateway"] .model-selector-trigger,
 html[data-liveagent-webui="gateway"] .model-selector-current-label {
-  font-size: 15px;
+  font-size: 13px;
   line-height: 1.3;
 }
 
@@ -3560,8 +3566,9 @@ html[data-liveagent-webui="gateway"]
   }
 
   html[data-liveagent-webui="gateway"] .model-selector-trigger {
-    width: clamp(7rem, calc(100vw - 13rem), 15rem);
-    max-width: clamp(7rem, calc(100vw - 13rem), 15rem) !important;
+    width: auto;
+    max-width: 10rem !important;
+    min-width: 0;
     padding-left: 8px;
     padding-right: 8px;
   }
@@ -3587,8 +3594,9 @@ html[data-liveagent-webui="gateway"]
   }
 
   html[data-liveagent-webui="gateway"] .model-selector-trigger {
-    width: clamp(6.25rem, calc(100vw - 12.5rem), 13rem);
-    max-width: clamp(6.25rem, calc(100vw - 12.5rem), 13rem) !important;
+    width: auto;
+    max-width: 7.5rem !important;
+    min-width: 0;
   }
 
   html[data-liveagent-webui="gateway"] .project-tools-panel-tab {

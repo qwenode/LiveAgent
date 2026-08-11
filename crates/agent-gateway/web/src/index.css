@@ -1255,10 +1255,10 @@
     transform-origin: var(--transform-origin, bottom left);
   }
 
-  /* Chat header model selector: grow out of the trigger with a soft slide.
-   * Base UI drives the popup lifecycle, so enter/exit are keyed off
-   * data-starting-style / data-ending-style and the transition delays
-   * unmount. */
+  /* Composer model selector: prefer opening upward from the toolbar; Base UI
+   * may collision-flip it below, so motion follows the resolved data-side.
+   * Enter/exit use data-starting-style / data-ending-style and the transition
+   * delays unmount. */
   .model-selector-dropdown {
     /* Slide from the anchor side; flipped placement overrides per data-side. */
     --model-menu-slide-y: -6px;
