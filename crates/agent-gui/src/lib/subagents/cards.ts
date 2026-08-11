@@ -5,6 +5,7 @@ import {
   type SubagentBatchDetails,
   type SubagentCardArguments,
   type SubagentCardDetails,
+  type SubagentCardLiveState,
   type SubagentReportDetails,
 } from "@liveagent/ui/lib/subagents/protocol";
 import { AGENT_TOOL_NAME, type SubagentIdentity, type SubagentSpec } from "./types";
@@ -32,13 +33,36 @@ export function buildSubagentCardToolCall(params: {
     name: params.identity.name,
     role: params.identity.role,
     mode: params.spec.mode,
+    task_type: params.spec.taskType,
     prompt: params.spec.prompt,
+    phase: "queued",
+    tool_calls: 0,
+    last_activity_at: Date.now(),
   };
   return {
     type: "toolCall",
     id: buildSubagentCardToolCallId(params.parentToolCallId, params.index + 1),
     name: AGENT_TOOL_NAME,
     arguments: cardArguments,
+  };
+}
+
+/** Replace the mutable progress snapshot while preserving the card's stable identity. */
+export function withSubagentCardLiveState(
+  toolCall: ToolCall,
+  live: SubagentCardLiveState,
+): ToolCall {
+  const argumentsValue = toolCall.arguments as SubagentCardArguments;
+  return {
+    ...toolCall,
+    arguments: {
+      ...argumentsValue,
+      phase: live.phase,
+      round: live.round,
+      tool_calls: live.toolCalls,
+      active_tool: live.activeTool,
+      last_activity_at: live.lastActivityAt,
+    } satisfies SubagentCardArguments,
   };
 }
 
@@ -96,6 +120,7 @@ export function renderBatchResultText(details: SubagentBatchDetails) {
       `run_id=${agent.runId}`,
       agent.role ? `role=${agent.role}` : "",
       `mode=${agent.mode}`,
+      agent.taskType ? `task_type=${agent.taskType}` : "",
       agent.applyPolicy ? `apply_policy=${agent.applyPolicy}` : "",
       agent.templateId ? `template=${agent.templateId}` : "",
       `duration_ms=${agent.durationMs} rounds=${agent.rounds} tool_calls=${agent.toolCalls}`,

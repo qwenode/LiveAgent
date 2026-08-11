@@ -96,6 +96,7 @@ function readLocalUiSettings(): {
     ) as Record<string, unknown>;
     return {
       conversationTitleModel: normalizeSelectedModel(obj.conversationTitleModel),
+      subagentFastModel: normalizeSelectedModel(obj.subagentFastModel),
       chatSidebar: {
         projectsCollapsed: chatSidebar.projectsCollapsed === true,
         recentCollapsed: chatSidebar.recentCollapsed === true,

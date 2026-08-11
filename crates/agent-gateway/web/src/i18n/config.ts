@@ -1614,6 +1614,11 @@ export const translations: Record<Locale, Record<string, string>> = {
     /* ── Settings Prompt ── */
     "settings.agentsTitle": "全局提示词",
     "settings.agentsDesc": "管理可复用的全局提示词模板",
+    "settings.agentsFastModel": "快速模型",
+    "settings.agentsFastModelHint":
+      "用于 Agent 任务中的文件定位、调用链搜索、日志分类、文档整理、结果摘要和简单验证；未选择时跟随当前对话模型。",
+    "settings.agentsFastModelFollow": "跟随当前对话模型",
+    "settings.agentsFastModelEmpty": "当前没有已激活的模型，请先在供应商设置中激活模型。",
     "settings.agentsAdd": "新增模板",
     "settings.agentsEdit": "编辑模板",
     "settings.agentsName": "名称",
@@ -3929,6 +3934,12 @@ export const translations: Record<Locale, Record<string, string>> = {
     /* ── Settings Prompt ── */
     "settings.agentsTitle": "Prompt",
     "settings.agentsDesc": "Manage reusable global prompt templates",
+    "settings.agentsFastModel": "Fast model",
+    "settings.agentsFastModelHint":
+      "Used for Agent jobs that locate files, trace call chains, classify logs, organize documents, summarize results, or perform simple verification. If unset, it uses the current chat model.",
+    "settings.agentsFastModelFollow": "Use current chat model",
+    "settings.agentsFastModelEmpty":
+      "No active models are available. Activate a model in Providers first.",
     "settings.agentsAdd": "Add Template",
     "settings.agentsEdit": "Edit Template",
     "settings.agentsName": "Name",

@@ -8,6 +8,10 @@ import type {
   SubagentWorktreeInfo,
 } from "./types";
 
+function currentTaskTypeLine(spec: SubagentSpec) {
+  return `Current task type: ${spec.taskType ?? "unclassified (task_type omitted)"}. This classification applies only to the current run.`;
+}
+
 export function buildSubagentSystemPrompt(params: {
   spec: SubagentSpec;
   identity: SubagentIdentity;
@@ -53,6 +57,7 @@ export function buildSubagentSystemPrompt(params: {
     params.spec.mode === "worktree"
       ? [
           identityBlock,
+          currentTaskTypeLine(params.spec),
           "You are running in an isolated git worktree.",
           "Complete only the assigned agent job and report concise findings back to the parent agent.",
           "Do not address the end user directly. Do not ask follow-up questions.",
@@ -72,6 +77,7 @@ export function buildSubagentSystemPrompt(params: {
         ].filter((line): line is string => Boolean(line))
       : [
           identityBlock,
+          currentTaskTypeLine(params.spec),
           "You are running in an isolated read-only context.",
           "Complete only the assigned agent job and report concise findings back to the parent agent.",
           "Do not address the end user directly. Do not ask follow-up questions. Do not claim to have edited files or run shell commands.",
@@ -105,6 +111,7 @@ function buildSubagentUserPrompt(params: {
     `Delegated agent name: ${params.identity.name}`,
     `Delegated agent id: ${params.identity.agentId}`,
     `Delegated agent role: ${params.identity.role}`,
+    currentTaskTypeLine(params.spec),
     "",
     "Current task:",
     params.spec.prompt,
@@ -178,6 +185,7 @@ export function buildSubagentContinuationMessage(params: {
           `Previous run id: ${params.resumedFrom.id}`,
           `Previous mode: ${params.resumedFrom.mode}`,
           `Current mode: ${params.spec.mode}`,
+          currentTaskTypeLine(params.spec),
           params.resumedFrom.mode !== params.spec.mode
             ? `Execution mode changed: ${params.resumedFrom.mode} -> ${params.spec.mode}`
             : "",

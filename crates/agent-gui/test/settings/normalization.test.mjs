@@ -424,7 +424,7 @@ test("settings normalization canonicalizes project keyed maps with Windows path 
   });
 });
 
-test("custom settings conversation title model only keeps enabled provider models", () => {
+test("custom settings selected models only keep enabled provider models", () => {
   const customProviders = [
     {
       id: "provider-1",
@@ -441,9 +441,14 @@ test("custom settings conversation title model only keeps enabled provider model
     customProviders,
     customSettings: {
       conversationTitleModel: { customProviderId: "provider-1", model: "gpt-5-mini" },
+      subagentFastModel: { customProviderId: "provider-1", model: "gpt-5-mini" },
     },
   });
   assert.deepEqual(normalized.customSettings.conversationTitleModel, {
+    customProviderId: "provider-1",
+    model: "gpt-5-mini",
+  });
+  assert.deepEqual(normalized.customSettings.subagentFastModel, {
     customProviderId: "provider-1",
     model: "gpt-5-mini",
   });
@@ -452,14 +457,26 @@ test("custom settings conversation title model only keeps enabled provider model
     customProviders,
     customSettings: {
       conversationTitleModel: { customProviderId: "provider-1", model: "gpt-5" },
+      subagentFastModel: { customProviderId: "provider-1", model: "gpt-5" },
     },
   });
   assert.equal(stale.customSettings.conversationTitleModel, undefined);
+  assert.equal(stale.customSettings.subagentFastModel, undefined);
+
+  const deletedProvider = settings.normalizeSettings({
+    customProviders,
+    customSettings: {
+      subagentFastModel: { customProviderId: "missing-provider", model: "gpt-5-mini" },
+    },
+  });
+  assert.equal(deletedProvider.customSettings.subagentFastModel, undefined);
 
   const cleared = settings.updateCustomSettings(normalized, {
     conversationTitleModel: undefined,
+    subagentFastModel: undefined,
   });
   assert.equal(cleared.customSettings.conversationTitleModel, undefined);
+  assert.equal(cleared.customSettings.subagentFastModel, undefined);
 });
 
 test("chat runtime controls default and follow provider model reasoning support", () => {
@@ -849,6 +866,7 @@ test("gateway settings sync payload redacts provider api keys", () => {
     },
     customSettings: {
       conversationTitleModel: { customProviderId: "provider-1", model: "gpt-5" },
+      subagentFastModel: { customProviderId: "provider-1", model: "gpt-5" },
       rightDock: {
         width: 612,
         projects: {
@@ -902,6 +920,10 @@ test("gateway settings sync payload redacts provider api keys", () => {
   assert.equal(payload.customProviders[0].apiKeyConfigured, true);
   assert.equal(payload.customProviders[0].nativeWebSearchEnabled, true);
   assert.deepEqual(payload.customSettings.conversationTitleModel, {
+    customProviderId: "provider-1",
+    model: "gpt-5",
+  });
+  assert.deepEqual(payload.customSettings.subagentFastModel, {
     customProviderId: "provider-1",
     model: "gpt-5",
   });

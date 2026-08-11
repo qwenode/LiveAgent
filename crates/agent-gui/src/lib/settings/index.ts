@@ -187,6 +187,7 @@ export type ChatTranscriptSettings = {
 
 export type CustomSettings = {
   conversationTitleModel?: SelectedModel;
+  subagentFastModel?: SelectedModel;
   chatSidebar: ChatSidebarSettings;
   chatTranscript: ChatTranscriptSettings;
   rightDock: RightDockSettings;
@@ -2481,6 +2482,10 @@ export function normalizeCustomSettings(
   return {
     conversationTitleModel: normalizeSelectedModelForProviders(
       normalizeSelectedModel(obj.conversationTitleModel),
+      customProviders,
+    ),
+    subagentFastModel: normalizeSelectedModelForProviders(
+      normalizeSelectedModel(obj.subagentFastModel),
       customProviders,
     ),
     chatSidebar: {

@@ -9,6 +9,7 @@ import {
   type SubagentIdentity,
   type SubagentMode,
   type SubagentSpec,
+  type SubagentTaskType,
   type SubagentTemplate,
 } from "./types";
 import { asObject, clampInteger, optionalString } from "./utils";
@@ -44,6 +45,7 @@ export function createTemplateLookup(templates: SubagentTemplate[]) {
 const KNOWN_AGENT_KEYS = new Set([
   "id",
   "prompt",
+  "task_type",
   "name",
   "role",
   "identity",
@@ -56,6 +58,7 @@ const KNOWN_AGENT_KEYS = new Set([
 ]);
 
 const MODES = new Set<SubagentMode>(["readonly", "worktree"]);
+const TASK_TYPES = new Set<SubagentTaskType>(["search", "synthesis"]);
 const APPLY_POLICIES = new Set<SubagentApplyPolicy>(["none", "explicit", "auto"]);
 
 function parseOptionalBoolean(
@@ -216,6 +219,22 @@ export function parseSubagentBatch(
       );
     }
 
+    let taskType: SubagentTaskType | undefined;
+    if (typeof entry.task_type !== "undefined") {
+      const rawTaskType = optionalString(entry.task_type);
+      if (!rawTaskType || !TASK_TYPES.has(rawTaskType as SubagentTaskType)) {
+        issues.push(
+          issue(
+            "invalid_arguments",
+            'task_type must be "search" or "synthesis" when present.',
+            agentRef,
+          ),
+        );
+      } else {
+        taskType = rawTaskType as SubagentTaskType;
+      }
+    }
+
     const duplicateKey = normalizeLookupKey(id);
     if (id && seenIds.has(duplicateKey)) {
       issues.push(
@@ -339,6 +358,7 @@ export function parseSubagentBatch(
       spec: {
         id,
         prompt,
+        taskType,
         name,
         role,
         identity: identityText,

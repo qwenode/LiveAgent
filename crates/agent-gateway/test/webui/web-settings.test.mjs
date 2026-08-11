@@ -79,6 +79,60 @@ test("gateway model picker keeps same-name provider instances in separate groups
   );
 });
 
+test("web settings normalize and persist the subagent fast model", () => {
+  installWindow();
+  const customProviders = [
+    {
+      id: "provider-1",
+      name: "Provider",
+      type: "codex",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "key",
+      models: ["gpt-5", "gpt-5-mini"],
+      activeModels: ["gpt-5-mini"],
+    },
+  ];
+  const normalized = settings.normalizeSettings({
+    customProviders,
+    customSettings: {
+      subagentFastModel: { customProviderId: "provider-1", model: "gpt-5-mini" },
+    },
+  });
+  assert.deepEqual(normalized.customSettings.subagentFastModel, {
+    customProviderId: "provider-1",
+    model: "gpt-5-mini",
+  });
+
+  const stale = settings.normalizeSettings({
+    customProviders,
+    customSettings: {
+      subagentFastModel: { customProviderId: "provider-1", model: "gpt-5" },
+    },
+  });
+  assert.equal(stale.customSettings.subagentFastModel, undefined);
+
+  webSettings.persistWebSettings(normalized);
+  assert.deepEqual(
+    webSettings.loadWebSettings("token").customSettings.subagentFastModel,
+    normalized.customSettings.subagentFastModel,
+  );
+
+  const payload = settingsSync.buildGatewaySettingsSyncPayload(normalized);
+  assert.deepEqual(payload.customSettings.subagentFastModel, {
+    customProviderId: "provider-1",
+    model: "gpt-5-mini",
+  });
+  assert.equal(payload.customProviders[0].apiKey, undefined);
+  const applied = settingsSync.applyGatewaySettingsSyncPayload(
+    settings.normalizeSettings({ customProviders }),
+    payload,
+  );
+  assert.deepEqual(applied.customSettings.subagentFastModel, {
+    customProviderId: "provider-1",
+    model: "gpt-5-mini",
+  });
+});
+
 function installWindow(origin = "https://gateway.example") {
   const store = new Map();
   globalThis.window = {

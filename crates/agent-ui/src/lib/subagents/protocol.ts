@@ -6,8 +6,25 @@
  */
 
 export type SubagentProtocolMode = "readonly" | "worktree";
+export type SubagentProtocolTaskType = "search" | "synthesis";
 export type SubagentProtocolStatus = "completed" | "failed" | "cancelled";
 export type SubagentProtocolChannel = "direct" | "shared" | "decision" | "question";
+export type SubagentLivePhase =
+  | "queued"
+  | "starting"
+  | "model"
+  | "responding"
+  | "tool"
+  | "settling"
+  | "stalled";
+
+export type SubagentCardLiveState = {
+  phase: SubagentLivePhase;
+  round?: number;
+  toolCalls?: number;
+  activeTool?: string;
+  lastActivityAt?: number;
+};
 
 /** Final per-agent report embedded in cards and batch results. */
 export type SubagentReportDetails = {
@@ -16,6 +33,7 @@ export type SubagentReportDetails = {
   name: string;
   role?: string;
   prompt: string;
+  taskType?: SubagentProtocolTaskType;
   templateId?: string;
   mode: SubagentProtocolMode;
   applyPolicy?: "none" | "explicit" | "auto";
@@ -132,7 +150,13 @@ export type SubagentCardArguments = {
   name?: string;
   role?: string;
   mode?: SubagentProtocolMode;
+  task_type?: SubagentProtocolTaskType;
   prompt?: string;
+  phase?: SubagentLivePhase;
+  round?: number;
+  tool_calls?: number;
+  active_tool?: string;
+  last_activity_at?: number;
 };
 
 export function buildSubagentCardToolCallId(parentToolCallId: string, displayIndex: number) {
@@ -143,4 +167,39 @@ export function isSubagentCardArguments(value: unknown): value is SubagentCardAr
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   return record.subagent_card === true && typeof record.id === "string";
+}
+
+const SUBAGENT_LIVE_PHASES = new Set<SubagentLivePhase>([
+  "queued",
+  "starting",
+  "model",
+  "responding",
+  "tool",
+  "settling",
+  "stalled",
+]);
+
+function optionalNonNegativeInteger(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : undefined;
+}
+
+/** Parse the mutable progress snapshot carried by a live synthetic card call. */
+export function readSubagentCardLiveState(value: unknown): SubagentCardLiveState | null {
+  if (!isSubagentCardArguments(value)) return null;
+  const phase = value.phase;
+  if (typeof phase !== "string" || !SUBAGENT_LIVE_PHASES.has(phase as SubagentLivePhase)) {
+    return null;
+  }
+  return {
+    phase: phase as SubagentLivePhase,
+    round: optionalNonNegativeInteger(value.round),
+    toolCalls: optionalNonNegativeInteger(value.tool_calls),
+    activeTool:
+      typeof value.active_tool === "string" && value.active_tool.trim()
+        ? value.active_tool.trim()
+        : undefined,
+    lastActivityAt: optionalNonNegativeInteger(value.last_activity_at),
+  };
 }

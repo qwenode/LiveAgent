@@ -79,8 +79,9 @@
 
 | 能力 | 说明 |
 |---|---|
-| 结构化参数 | `agents` 数组（每项 `id/prompt/name/role/identity/template/mode/apply_policy/allowed_output_paths/resume/retain_worktree`）+ 顶层 `concurrency`，单次最多 8 个 agent 并行。 |
+| 结构化参数 | `agents` 数组（每项 `id/prompt/name/role/identity/template/mode/task_type/apply_policy/allowed_output_paths/resume/retain_worktree`）+ 顶层 `concurrency`，单次最多 8 个 agent 并行。 |
 | 稳定 id 与复用 | 同一会话内复用 id 即恢复该子代理的私有上下文；`name/role/identity/template` 只在 id 首次创建时生效，对既有 id 传入不同值会被拒绝。`resume=false` 为同一 id 开启全新私有上下文。 |
+| 模型路由 | `task_type=search` 用于聚焦检索、代码导航、文档/日志调查和简单验证；`task_type=synthesis` 用于汇总、比较或整理已有发现。仅这两类显式任务在配置有效时使用全局 `subagentFastModel`；字段省略、配置缺失或 Provider/模型失效时沿用当前父对话模型。Fast 请求若在首个 `text_delta`/`thinking_delta`/`toolcall_start` 提交前发生可切换的鉴权、配额、网络或上游错误，也只回退到该 Agent 批次快照的当前父模型；提交后不得整轮重跑，以免重复文本或工具副作用。实现、架构、高风险决策和依赖大量父上下文的工作必须省略该字段。`task_type` 只属于本次 job，resume 不继承，需按新任务重新指定。 |
 | mode | `readonly`（新 agent 默认，只读工具）用于调研/评审；`worktree` 在隔离 git worktree 内提供文件+shell 工具。resume 的 agent 默认沿用上次 mode。 |
 | apply_policy | `none`（默认，不回灌）/`auto`（自动 apply patch）/`explicit`（仅当所有变更文件命中 `allowed_output_paths` 才 apply；路径必须解析进 workspace）。`retain_worktree=true` 保留可安全清理的 worktree 供复查。 |
 | 原子校验 | 校验失败时不启动任何 agent，返回结构化错误并附上当前 roster 与已启用模板列表；`AgentPromptTemplate.enabled` 生效，`template` 只能引用已启用模板（按 id 或 name 解析）。 |

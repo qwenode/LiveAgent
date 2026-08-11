@@ -56,6 +56,27 @@ test("minimal valid agent gets mechanical defaults", () => {
   assert.equal(result.batch.concurrency, 1);
 });
 
+test("task_type is optional, trimmed, and limited to search or synthesis", () => {
+  const valid = parse({
+    agents: [
+      { id: "searcher", prompt: "find it", task_type: " search " },
+      { id: "summarizer", prompt: "summarize it", task_type: "synthesis" },
+      { id: "builder", prompt: "implement it" },
+    ],
+  });
+  assert.equal(valid.ok, true);
+  assert.deepEqual(
+    valid.batch.agents.map(({ spec }) => spec.taskType),
+    ["search", "synthesis", undefined],
+  );
+
+  for (const taskType of [null, "", "review", 42]) {
+    const invalid = parse({ agents: [{ id: "a", prompt: "go", task_type: taskType }] });
+    assert.deepEqual(issueCodes(invalid), ["invalid_arguments"]);
+    assert.match(invalid.issues[0].message, /task_type must be "search" or "synthesis"/);
+  }
+});
+
 test("unknown top-level parameter rejects the whole call", () => {
   const result = parse({
     agents: [{ id: "a", prompt: "ok" }],
@@ -89,7 +110,7 @@ test("unknown agent field is rejected with the allowed field list", () => {
   });
   assert.deepEqual(issueCodes(result), ["invalid_arguments"]);
   assert.match(result.issues[0].message, /Unknown agent field "persona"/);
-  assert.match(result.issues[0].message, /Allowed fields: id, prompt, name, role/);
+  assert.match(result.issues[0].message, /Allowed fields: id, prompt, task_type, name, role/);
   assert.equal(result.issues[0].agentId, "a");
 });
 

@@ -212,6 +212,7 @@ test("buildRosterReminder lists agents with latest-run fields and truncates long
   assert.ok(/last_task=[^\n]*\.\.\./.test(reminder));
   assert.ok(/last_summary=[^\n]*\.\.\./.test(reminder));
   assert.match(reminder, /call Agent again with an `agents` entry per existing id/);
+  assert.match(reminder, /task_type is scoped to the current delegated job and is never inherited/);
 });
 
 test("buildRosterReminder omits entries beyond the cap with an omitted-count line", () => {

@@ -791,6 +791,10 @@ export function buildSubagentPlaceholderToolCalls(parentToolCall: ToolCall): Too
         name: optionalText(record.name),
         role: optionalText(record.role),
         mode: record.mode === "worktree" || record.mode === "readonly" ? record.mode : undefined,
+        task_type:
+          record.task_type === "search" || record.task_type === "synthesis"
+            ? record.task_type
+            : undefined,
         prompt,
       },
     });
@@ -826,6 +830,7 @@ function buildSubagentCardToolCallFromReport(params: {
       role: params.agent.role,
       prompt: params.agent.prompt,
       mode: params.agent.mode,
+      task_type: params.agent.taskType,
     },
   };
 }

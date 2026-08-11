@@ -1042,6 +1042,7 @@ test("UI message builder expands subagent batch results without showing the pare
           runId: "call-agent:agent:1:a:uuid",
           name: "Agent A",
           prompt: "Inspect A.",
+          taskType: "search",
           mode: "worktree",
           status: "completed",
           summary: "A done",
@@ -1056,6 +1057,7 @@ test("UI message builder expands subagent batch results without showing the pare
           runId: "call-agent:agent:2:b:uuid",
           name: "Agent B",
           prompt: "Inspect B.",
+          taskType: "synthesis",
           mode: "worktree",
           status: "failed",
           summary: "",
@@ -1099,6 +1101,10 @@ test("UI message builder expands subagent batch results without showing the pare
     [2, 2],
   );
   assert.deepEqual(
+    trace.map((item) => item.toolCall.arguments.task_type),
+    ["search", "synthesis"],
+  );
+  assert.deepEqual(
     trace.map((item) => item.toolResult.details.kind),
     ["subagent_card", "subagent_card"],
   );
@@ -1139,8 +1145,19 @@ test("subagent placeholders are built from complete structured agents before res
     name: "Agent",
     arguments: {
       agents: [
-        { id: "a", name: "狼人玩家 1", prompt: "你是玩家 1，请继续发言。", mode: "readonly" },
-        { id: "b", name: "狼人玩家 2", prompt: "你是玩家 2，请继续发言。" },
+        {
+          id: "a",
+          name: "狼人玩家 1",
+          prompt: "你是玩家 1，请继续发言。",
+          mode: "readonly",
+          task_type: "search",
+        },
+        {
+          id: "b",
+          name: "狼人玩家 2",
+          prompt: "你是玩家 2，请继续发言。",
+          task_type: "synthesis",
+        },
       ],
       concurrency: 2,
     },
@@ -1167,6 +1184,10 @@ test("subagent placeholders are built from complete structured agents before res
   assert.deepEqual(
     placeholders.map((item) => item.arguments.mode),
     ["readonly", undefined],
+  );
+  assert.deepEqual(
+    placeholders.map((item) => item.arguments.task_type),
+    ["search", "synthesis"],
   );
   assert.deepEqual(
     placeholders.map((item) => item.arguments.parent_tool_call_id),

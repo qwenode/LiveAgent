@@ -301,6 +301,12 @@ export function createDefaultCompactionMock(compactionCalls) {
 
     bindTurn(binding) {
       this.#presend = binding?.presend;
+      compactionCalls.push({
+        phase: "bind",
+        providerId: binding?.providerId,
+        model: binding?.model,
+        runtime: binding?.runtime,
+      });
     }
 
     unbindTurn() {
@@ -438,7 +444,7 @@ export async function createSubagentHarness(options = {}) {
   // Production builds the bundle only after the store hydrated.
   await store.ready();
 
-  const bundle = agentToolModule.createSubagentTools({
+  const parentRuntime = options.parentRuntime ?? {
     providerId: "codex",
     model: "gpt-5",
     runtime: {
@@ -446,6 +452,19 @@ export async function createSubagentHarness(options = {}) {
       apiKey: "test-key",
       reasoning: "medium",
     },
+  };
+  const bundle = agentToolModule.createSubagentTools({
+    selectedModel:
+      parentRuntime.selectedModel ?? {
+        customProviderId: "parent-provider",
+        model: parentRuntime.model,
+      },
+    label: parentRuntime.label ?? `Parent · ${parentRuntime.model}`,
+    providerId: parentRuntime.providerId,
+    model: parentRuntime.model,
+    runtime: parentRuntime.runtime,
+    getParentRuntime: options.getParentRuntime,
+    fastRuntime: options.fastRuntime,
     workdir: options.workdir ?? "/tmp/liveagent-subagent-test",
     sessionId: options.sessionId === null ? undefined : (options.sessionId ?? "parent-session"),
     templates: options.templates ?? [

@@ -1119,8 +1119,8 @@ test("buildRowsFromEntries expands parent Agent batch results into Agent cards",
           totalDurationMs: 2400,
           mode: "readonly",
           agents: [
-            createSubagentReport("a", "Inspect A.", "A done"),
-            createSubagentReport("b", "Inspect B.", "B done"),
+            createSubagentReport("a", "Inspect A.", "A done", { taskType: "search" }),
+            createSubagentReport("b", "Inspect B.", "B done", { taskType: "synthesis" }),
           ],
         },
         isError: false,
@@ -1141,6 +1141,10 @@ test("buildRowsFromEntries expands parent Agent batch results into Agent cards",
   assert.deepEqual(
     toolBlocks.map((block) => block.item.toolCall.arguments.subagent_card),
     [true, true],
+  );
+  assert.deepEqual(
+    toolBlocks.map((block) => block.item.toolCall.arguments.task_type),
+    ["search", "synthesis"],
   );
   assert.deepEqual(
     toolBlocks.map((block) => block.item.toolResult.details.kind),
@@ -1166,9 +1170,16 @@ test("buildSubagentPlaceholderToolCalls builds stable Agent cards from structure
           name: "一号玩家",
           role: "发言者",
           mode: "readonly",
+          task_type: "search",
           prompt: "第一轮请给出观点",
         },
-        { id: "player2", name: "二号玩家", mode: "readonly", prompt: "第二轮请反驳" },
+        {
+          id: "player2",
+          name: "二号玩家",
+          mode: "readonly",
+          task_type: "synthesis",
+          prompt: "第二轮请反驳",
+        },
       ],
     },
   });
@@ -1189,6 +1200,10 @@ test("buildSubagentPlaceholderToolCalls builds stable Agent cards from structure
   assert.deepEqual(
     placeholders.map((item) => item.arguments.role),
     ["发言者", undefined],
+  );
+  assert.deepEqual(
+    placeholders.map((item) => item.arguments.task_type),
+    ["search", "synthesis"],
   );
   assert.deepEqual(
     placeholders.map((item) => item.arguments.subagent_card),

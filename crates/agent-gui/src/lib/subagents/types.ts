@@ -21,6 +21,7 @@ export const SUBAGENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 export type SubagentMode = "readonly" | "worktree";
 export type SubagentApplyPolicy = "none" | "explicit" | "auto";
+export type SubagentTaskType = "search" | "synthesis";
 export type SubagentRunStatus = "running" | "completed" | "failed" | "cancelled";
 export type SubagentMessageChannel = "direct" | "shared" | "decision" | "question";
 
@@ -28,6 +29,7 @@ export type SubagentMessageChannel = "direct" | "shared" | "decision" | "questio
 export type SubagentSpec = {
   id: string;
   prompt: string;
+  taskType?: SubagentTaskType;
   name?: string;
   role?: string;
   identity?: string;
