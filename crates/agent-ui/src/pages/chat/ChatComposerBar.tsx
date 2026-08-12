@@ -197,6 +197,8 @@ export type ChatQueueTurnPreview = {
   id: string;
   previewText: string;
   fileCount: number;
+  editable?: boolean;
+  runnable?: boolean;
 };
 
 type QueueScrollbarState = {
@@ -233,6 +235,8 @@ export type ChatComposerBarProps = {
   enabledSkills: MentionComposerSkill[];
   isAgentMode: boolean;
   executionMode: AppSettings["system"]["executionMode"];
+  runningAgentSendMode?: AppSettings["system"]["runningAgentSendMode"];
+  isDirectHandoffPending?: boolean;
   hasModels: boolean;
   currentModelLabel: string;
   modelOptions: ModelOption[];
@@ -282,6 +286,8 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
     enabledSkills,
     isAgentMode,
     executionMode,
+    runningAgentSendMode,
+    isDirectHandoffPending = false,
     hasModels,
     currentModelLabel,
     modelOptions,
@@ -347,12 +353,19 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
   // 亮灯但开关与档位均不可操作；两者皆无才是真不支持。
   const thinkingSupported = reasoningOptions.length > 0 || thinkingAlwaysOn;
   const sendDisabled = isInputDisabled || isUploadingFiles || !hasSendableDraft;
-  const canQueueDraftWhileSending = isSending && !sendDisabled;
-  const primaryActionTitle = canQueueDraftWhileSending
-    ? t("chat.queue.addToQueue")
-    : isSending
-      ? t("chat.stopGeneration")
-      : t("chat.sendMessage");
+  const canSendDraftWhileRunning = isSending && !sendDisabled && !isDirectHandoffPending;
+  const useRunningAgentSendMode = isAgentMode && runningAgentSendMode !== undefined;
+  const primaryActionTitle = isDirectHandoffPending
+    ? t("chat.runningSend.switching")
+    : canSendDraftWhileRunning
+      ? useRunningAgentSendMode && runningAgentSendMode === "interrupt"
+        ? t("chat.queue.interruptAndSend")
+        : useRunningAgentSendMode && runningAgentSendMode === "steer"
+          ? t("chat.runningSend.insertBeforeNextTurn")
+          : t("chat.queue.addToQueue")
+      : isSending
+        ? t("chat.stopGeneration")
+        : t("chat.sendMessage");
   // controls 已经过 normalizeChatRuntimeControlsForProvider 钳制；这里兜底
   // 取表内最高档，绝不给 Select 喂表外值。
   const selectedReasoning = reasoningOptions.includes(chatRuntimeControls.reasoning)
@@ -736,7 +749,7 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
                             {index > 0 ? (
                               <button
                                 type="button"
-                                disabled={queueCollapsed}
+                                disabled={queueCollapsed || item.editable === false}
                                 onClick={() => onMoveQueuedTurnUp(item.id)}
                                 aria-label={t("chat.queue.moveUp")}
                                 className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
@@ -765,7 +778,7 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
                             <RuntimeControlTooltip label={t("chat.queue.edit")}>
                               <button
                                 type="button"
-                                disabled={queueCollapsed}
+                                disabled={queueCollapsed || item.editable === false}
                                 onClick={() => onEditQueuedTurn(item.id)}
                                 aria-label={t("chat.queue.edit")}
                                 className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
@@ -776,7 +789,7 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
                             <RuntimeControlTooltip label={t("chat.queue.runNow")}>
                               <button
                                 type="button"
-                                disabled={queueCollapsed}
+                                disabled={queueCollapsed || item.runnable === false}
                                 onClick={() => onRunQueuedTurnNow(item.id)}
                                 aria-label={t("chat.queue.runNow")}
                                 className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
@@ -787,7 +800,7 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
                             <RuntimeControlTooltip label={t("chat.queue.delete")}>
                               <button
                                 type="button"
-                                disabled={queueCollapsed}
+                                disabled={queueCollapsed || item.editable === false}
                                 onClick={() => onRemoveQueuedTurn(item.id)}
                                 aria-label={t("chat.queue.delete")}
                                 className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
@@ -1129,9 +1142,10 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
 
             <div className="flex shrink-0 items-center gap-1">
               <Button
-                disabled={isSending ? false : sendDisabled}
+                disabled={isDirectHandoffPending || (!isSending && sendDisabled)}
                 onClick={() => {
-                  if (canQueueDraftWhileSending) {
+                  if (isDirectHandoffPending) return;
+                  if (canSendDraftWhileRunning) {
                     handleComposerSend();
                     return;
                   }
@@ -1146,13 +1160,13 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
                 title={primaryActionTitle}
                 aria-label={primaryActionTitle}
                 style={
-                  canQueueDraftWhileSending
+                  canSendDraftWhileRunning
                     ? {
                         backgroundColor: "hsl(160 84% 39%)",
                         backgroundImage: "none",
                         color: "white",
                       }
-                    : isSending
+                    : isSending && !isDirectHandoffPending
                       ? {
                           backgroundColor: "hsl(var(--destructive))",
                           backgroundImage: "none",
@@ -1162,14 +1176,16 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
                 }
                 className={cn(
                   "h-8 w-8 shrink-0 rounded-full border-0 p-0 shadow-none transition-all",
-                  canQueueDraftWhileSending
+                  canSendDraftWhileRunning
                     ? "hover:brightness-105 active:scale-95"
-                    : isSending
+                    : isSending && !isDirectHandoffPending
                       ? "hover:opacity-90 active:scale-95"
                       : "disabled:opacity-100 [&:not(:disabled)]:bg-foreground [&:not(:disabled)]:text-background [&:not(:disabled)]:hover:bg-foreground/85 [&:not(:disabled)]:active:scale-95 disabled:bg-muted/60 disabled:text-muted-foreground",
                 )}
               >
-                {canQueueDraftWhileSending ? (
+                {isDirectHandoffPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : canSendDraftWhileRunning ? (
                   <Send className="h-4 w-4" />
                 ) : isSending ? (
                   <Square className="h-3 w-3 fill-current" />

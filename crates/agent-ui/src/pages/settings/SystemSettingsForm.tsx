@@ -10,9 +10,11 @@ import {
 import {
   ChevronRight,
   Cpu,
+  ListChecks,
   MessageSquare,
   MonitorSmartphone,
   Moon,
+  Send,
   Settings2,
   Sun,
   Wrench,
@@ -20,6 +22,7 @@ import {
 import {
   type ExecutionMode,
   type FontScaleSettings,
+  type RunningAgentSendMode,
   isValidSystemProxyHost,
   type SystemProxyConfig,
   type SystemProxyType,
@@ -166,6 +169,7 @@ export function SystemSettingsForm(props: SettingsSectionProps) {
   const { t } = useLocale();
 
   const executionMode = settings.system.executionMode;
+  const runningAgentSendMode = settings.system.runningAgentSendMode;
   const isClassicAgentMode = executionMode === "tools";
   const isAgentDevMode = executionMode === "agent-dev";
 
@@ -381,6 +385,38 @@ export function SystemSettingsForm(props: SettingsSectionProps) {
             onClick={() =>
               setSettings((prev) =>
                 updateSystem(prev, { executionMode: "agent-dev" as ExecutionMode }),
+              )
+            }
+          />
+        </fieldset>
+      </SettingsGroup>
+
+      <SettingsGroup title={t("settings.runningAgentSendMode")}>
+        <fieldset
+          aria-label={t("settings.runningAgentSendMode")}
+          className="m-0 min-w-0 border-0 p-0"
+        >
+          <SettingsChoiceRow
+            icon={<Send className="h-4.5 w-4.5" />}
+            title={t("settings.runningAgentSendModeInterrupt")}
+            description={t("settings.runningAgentSendModeInterruptDesc")}
+            selected={runningAgentSendMode === "interrupt"}
+            onClick={() =>
+              setSettings((prev) =>
+                updateSystem(prev, {
+                  runningAgentSendMode: "interrupt" as RunningAgentSendMode,
+                }),
+              )
+            }
+          />
+          <SettingsChoiceRow
+            icon={<ListChecks className="h-4.5 w-4.5" />}
+            title={t("settings.runningAgentSendModeSteer")}
+            description={t("settings.runningAgentSendModeSteerDesc")}
+            selected={runningAgentSendMode === "steer"}
+            onClick={() =>
+              setSettings((prev) =>
+                updateSystem(prev, { runningAgentSendMode: "steer" as RunningAgentSendMode }),
               )
             }
           />

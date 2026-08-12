@@ -29,7 +29,9 @@ import type {
   SidebarListStatus,
   SidebarMutationKind,
   SidebarRunningItem,
+  SidebarRunOutcome,
   SidebarScope,
+  SidebarUnseenRunResult,
   SidebarWorkdirSummary,
   SidebarWorkspaceFeed,
   SidebarWorkspaceFeedErrorCode,
@@ -61,6 +63,8 @@ export type SidebarSnapshot = {
   workdirActivity: ReadonlyMap<string, number>;
   runningConversationIds: ReadonlySet<string>;
   runningWorkdirPathKeys: ReadonlySet<string>;
+  unseenRunResults: ReadonlyMap<string, SidebarUnseenRunResult>;
+  unseenWorkdirOutcomes: ReadonlyMap<string, SidebarRunOutcome>;
   mutations: ReadonlyMap<string, SidebarMutationKind>;
   mutationErrors: ReadonlyMap<string, SidebarErrorCode>;
 };
@@ -101,10 +105,20 @@ export type SidebarStore = {
   applyRunningPatch(patch: {
     conversationId: string;
     running: boolean;
+    runId?: string | null;
     workdir?: string | null;
     updatedAt?: number;
   }): void;
   hydrateRunning(items: readonly SidebarRunningItem[]): void;
+  markRunResult(input: {
+    conversationId: string;
+    outcome: SidebarRunOutcome;
+    runId?: string | null;
+    workdir?: string | null;
+    updatedAt?: number;
+    seen?: boolean;
+  }): void;
+  clearRunResult(conversationId: string): void;
   peek(conversationId: string): SidebarConversation | undefined;
   peekConversations(): readonly SidebarConversation[];
 };
@@ -124,6 +138,35 @@ function persistedCount(conversations: readonly SidebarConversation[]) {
     if (item.isPending !== true) count += 1;
   }
   return count;
+}
+
+const RUN_OUTCOME_PRIORITY: Record<SidebarRunOutcome, number> = {
+  success: 1,
+  cancelled: 2,
+  failure: 3,
+};
+const RECENT_FINISHED_RUN_IDS_PER_CONVERSATION = 16;
+
+type SidebarRunResultHistory = {
+  latestUpdatedAt: number;
+  recentRunIds: readonly string[];
+};
+
+function unseenWorkdirOutcomesOf(
+  results: ReadonlyMap<string, SidebarUnseenRunResult>,
+  conversations: ReadonlyMap<string, SidebarConversation>,
+): ReadonlyMap<string, SidebarRunOutcome> {
+  const outcomes = new Map<string, SidebarRunOutcome>();
+  for (const [conversationId, result] of results) {
+    const workdir = conversations.get(conversationId)?.cwd?.trim() || result.workdir;
+    const pathKey = workspaceProjectPathKey(workdir ?? "");
+    if (!pathKey) continue;
+    const current = outcomes.get(pathKey);
+    if (!current || RUN_OUTCOME_PRIORITY[result.outcome] > RUN_OUTCOME_PRIORITY[current]) {
+      outcomes.set(pathKey, result.outcome);
+    }
+  }
+  return outcomes;
 }
 
 type WorkspaceFeedRequest = {
@@ -149,6 +192,8 @@ export function createSidebarStore(
   let scope: SidebarScope = { kind: "none" };
   let byId = new Map<string, SidebarConversation>();
   let running = new Map<string, { workdir: string | null; updatedAt: number }>();
+  let unseenRunResults = new Map<string, SidebarUnseenRunResult>();
+  const runResultHistory = new Map<string, SidebarRunResultHistory>();
   const runningStatusUpdatedAt = new Map<string, number>();
   const positionLocks = new Map<string, number>();
   let snapshot: SidebarSnapshot = {
@@ -167,6 +212,8 @@ export function createSidebarStore(
     workdirActivity: new Map(),
     runningConversationIds: new Set(),
     runningWorkdirPathKeys: new Set(),
+    unseenRunResults,
+    unseenWorkdirOutcomes: new Map(),
     mutations: new Map(),
     mutationErrors: new Map(),
   };
@@ -200,7 +247,14 @@ export function createSidebarStore(
   let workdirsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   const commit = (patch: Partial<SidebarSnapshot>) => {
-    snapshot = { ...snapshot, ...patch, revision: snapshot.revision + 1 };
+    const nextById = patch.byId ?? byId;
+    snapshot = {
+      ...snapshot,
+      ...patch,
+      unseenRunResults,
+      unseenWorkdirOutcomes: unseenWorkdirOutcomesOf(unseenRunResults, nextById),
+      revision: snapshot.revision + 1,
+    };
     for (const listener of listeners) {
       listener();
     }
@@ -226,6 +280,16 @@ export function createSidebarStore(
       if (trimmed) ids.add(trimmed);
     }
     return ids;
+  };
+
+  const dropRunResultState = (conversationId: string) => {
+    runResultHistory.delete(conversationId);
+    if (!unseenRunResults.has(conversationId)) {
+      return false;
+    }
+    unseenRunResults = new Map(unseenRunResults);
+    unseenRunResults.delete(conversationId);
+    return true;
   };
 
   const runningWorkdirPathKeysOf = (
@@ -403,6 +467,7 @@ export function createSidebarStore(
       }
       nextById ??= new Map(byId);
       nextById.delete(id);
+      dropRunResultState(id);
     }
     if (nextById) byId = nextById;
   };
@@ -853,6 +918,7 @@ export function createSidebarStore(
           byId = new Map(byId);
           byId.delete(event.conversationId);
         }
+        dropRunResultState(event.conversationId);
         const workspaceFeeds = updateWorkspaceFeedsForConversation(previous, undefined);
         const next = snapshot.conversations.filter((item) => item.id !== event.conversationId);
         scheduleWorkdirsDebounce();
@@ -866,6 +932,7 @@ export function createSidebarStore(
       case "running": {
         const workdir =
           event.workdir?.trim() || byId.get(event.conversationId)?.cwd?.trim() || null;
+        const runId = event.runId?.trim() || null;
         const updatedAt =
           typeof event.updatedAt === "number" && Number.isFinite(event.updatedAt)
             ? event.updatedAt
@@ -884,9 +951,31 @@ export function createSidebarStore(
         runningStatusUpdatedAt.set(event.conversationId, updatedAt);
         running = new Map(running);
         running.set(event.conversationId, { workdir, updatedAt });
+        // Gateway may retract an inferred-loss terminal and resurrect that exact
+        // run id. Forget only that run's provisional terminal identity so its
+        // later genuine result is not suppressed as a duplicate.
+        if (runId) {
+          const history = runResultHistory.get(event.conversationId);
+          if (history?.recentRunIds.includes(runId)) {
+            const recentRunIds = history.recentRunIds.filter((id) => id !== runId);
+            if (recentRunIds.length === 0 && history.latestUpdatedAt <= updatedAt) {
+              runResultHistory.delete(event.conversationId);
+            } else {
+              runResultHistory.set(event.conversationId, {
+                latestUpdatedAt: history.latestUpdatedAt,
+                recentRunIds,
+              });
+            }
+          }
+        }
+        if (unseenRunResults.has(event.conversationId)) {
+          unseenRunResults = new Map(unseenRunResults);
+          unseenRunResults.delete(event.conversationId);
+        }
         commit({
           runningConversationIds: new Set(running.keys()),
           runningWorkdirPathKeys: runningWorkdirPathKeysOf(running),
+          unseenRunResults,
           workdirActivity: bumpWorkdirActivity(snapshot.workdirActivity, workdir, updatedAt),
         });
         return;
@@ -1414,6 +1503,9 @@ export function createSidebarStore(
         },
       });
       if (removed) {
+        if (dropRunResultState(id)) {
+          commit({ unseenRunResults });
+        }
         void refreshWorkdirs("delete");
       }
       return removed;
@@ -1460,6 +1552,7 @@ export function createSidebarStore(
       }
       byId = new Map(byId);
       byId.delete(conversationId);
+      dropRunResultState(conversationId);
       const workspaceFeeds = updateWorkspaceFeedsForConversation(previous, undefined);
       commitScopedList(
         snapshot.conversations.filter((item) => item.id !== conversationId),
@@ -1475,6 +1568,7 @@ export function createSidebarStore(
           ? {
               kind: "running",
               conversationId: patch.conversationId,
+              runId: patch.runId,
               workdir: patch.workdir,
               updatedAt: patch.updatedAt,
             }
@@ -1518,6 +1612,81 @@ export function createSidebarStore(
         runningConversationIds: new Set(running.keys()),
         runningWorkdirPathKeys: runningWorkdirPathKeysOf(running),
       });
+    },
+
+    markRunResult: (input) => {
+      const conversationId = input.conversationId.trim();
+      if (!conversationId) return;
+      const runStatusUpdatedAt = runningStatusUpdatedAt.get(conversationId);
+      if (running.has(conversationId)) {
+        const resultUpdatedAt =
+          typeof input.updatedAt === "number" && Number.isFinite(input.updatedAt)
+            ? input.updatedAt
+            : null;
+        if (
+          resultUpdatedAt === null ||
+          runStatusUpdatedAt === undefined ||
+          resultUpdatedAt <= runStatusUpdatedAt
+        ) {
+          return;
+        }
+      }
+      const updatedAt =
+        typeof input.updatedAt === "number" && Number.isFinite(input.updatedAt)
+          ? input.updatedAt
+          : now();
+      const runId = input.runId?.trim() || null;
+      const history = runResultHistory.get(conversationId);
+      if (
+        (runId && history?.recentRunIds.includes(runId)) ||
+        (!runId && history && updatedAt <= history.latestUpdatedAt)
+      ) {
+        return;
+      }
+      if (runId) {
+        runResultHistory.set(conversationId, {
+          latestUpdatedAt: Math.max(history?.latestUpdatedAt ?? 0, updatedAt),
+          recentRunIds: [
+            runId,
+            ...(history?.recentRunIds ?? []).filter((id) => id !== runId),
+          ].slice(0, RECENT_FINISHED_RUN_IDS_PER_CONVERSATION),
+        });
+      } else if (!history || updatedAt > history.latestUpdatedAt) {
+        runResultHistory.set(conversationId, {
+          latestUpdatedAt: updatedAt,
+          recentRunIds: history?.recentRunIds ?? [],
+        });
+      }
+      // Failure is an actionable terminal state and must remain visible even
+      // when the conversation was being viewed when the run ended.
+      if (input.seen === true && input.outcome !== "failure") {
+        if (unseenRunResults.has(conversationId)) {
+          unseenRunResults = new Map(unseenRunResults);
+          unseenRunResults.delete(conversationId);
+          commit({ unseenRunResults });
+        }
+        return;
+      }
+      const current = unseenRunResults.get(conversationId);
+      if (current && current.updatedAt > updatedAt) {
+        return;
+      }
+      unseenRunResults = new Map(unseenRunResults);
+      unseenRunResults.set(conversationId, {
+        outcome: input.outcome,
+        runId,
+        workdir: input.workdir?.trim() || byId.get(conversationId)?.cwd?.trim() || null,
+        updatedAt,
+      });
+      commit({ unseenRunResults });
+    },
+
+    clearRunResult: (conversationId) => {
+      const id = conversationId.trim();
+      if (!id || !unseenRunResults.has(id)) return;
+      unseenRunResults = new Map(unseenRunResults);
+      unseenRunResults.delete(id);
+      commit({ unseenRunResults });
     },
 
     peek: (conversationId) => byId.get(conversationId),

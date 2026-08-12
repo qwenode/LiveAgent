@@ -5,6 +5,7 @@ import {
   normalizeChatRuntimeControls,
   normalizeRightDockSettings,
   normalizeSettings,
+  normalizeSubagentMaxRounds,
   normalizeWorkspaceResourceSettings,
   workspaceProjectPathKey,
 } from "@liveagent/app/lib/settings/index";
@@ -1247,6 +1248,10 @@ export function applyGatewaySettingsSyncPayload(
       : current.modelFailover,
     customSettings: {
       ...incomingCustomSettings,
+      subagentProactiveDelegation: incomingCustomSettings.subagentProactiveDelegation === true,
+      subagentMaxRounds: Object.hasOwn(incomingCustomSettings, "subagentMaxRounds")
+        ? normalizeSubagentMaxRounds(incomingCustomSettings.subagentMaxRounds)
+        : current.customSettings.subagentMaxRounds,
       rightDock: Object.hasOwn(incomingCustomSettings, "rightDock")
         ? mergeSyncedRightDockSettings(
             current.customSettings.rightDock,

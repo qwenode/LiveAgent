@@ -6,7 +6,7 @@
  */
 
 export type SubagentProtocolMode = "readonly" | "worktree";
-export type SubagentProtocolTaskType = "search" | "synthesis";
+export type SubagentProtocolTaskType = "search" | "synthesis" | "routine";
 export type SubagentProtocolStatus = "completed" | "failed" | "cancelled";
 export type SubagentProtocolChannel = "direct" | "shared" | "decision" | "question";
 export type SubagentLivePhase =

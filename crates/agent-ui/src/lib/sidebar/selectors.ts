@@ -59,11 +59,16 @@ export function selectRunningConversationIds(snapshot: SidebarSnapshot) {
   return snapshot.runningConversationIds;
 }
 
+export function selectUnseenRunResults(snapshot: SidebarSnapshot) {
+  return snapshot.unseenRunResults;
+}
+
 export function selectProjectActivityInputs(snapshot: SidebarSnapshot) {
   return {
     workdirs: snapshot.workdirs,
     workdirActivity: snapshot.workdirActivity,
     runningWorkdirPathKeys: snapshot.runningWorkdirPathKeys,
+    unseenWorkdirOutcomes: snapshot.unseenWorkdirOutcomes,
   };
 }
 

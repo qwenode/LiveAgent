@@ -1,20 +1,5 @@
-import {
-  BookOpen,
-  Eye,
-  FileText,
-  Pencil,
-  Plus,
-  Trash2,
-  X,
-  Zap,
-} from "@liveagent/app/components/icons";
-import { buildModelOptions } from "@liveagent/app/lib/chat/chatPageHelpers";
-import { parseModelValue, toModelValue } from "@liveagent/app/lib/providers/llm";
-import {
-  type AgentPromptTemplate,
-  updateAgents,
-  updateCustomSettings,
-} from "@liveagent/app/lib/settings/index";
+import { BookOpen, Eye, FileText, Pencil, Plus, Trash2, X } from "@liveagent/app/components/icons";
+import { type AgentPromptTemplate, updateAgents } from "@liveagent/app/lib/settings/index";
 import type { SettingsSectionProps } from "@liveagent/app/pages/settings/types";
 
 import { Button } from "@liveagent/ui/components/ui/button";
@@ -22,9 +7,8 @@ import { useLocale } from "@liveagent/ui/i18n/index";
 import { createUuid } from "@liveagent/ui/lib/shared/id";
 import { useModalMotion } from "@liveagent/ui/lib/shared/modalMotion";
 import { AgentPromptTemplateModal } from "@liveagent/ui/pages/settings/AgentPromptTemplateModal";
-import { ModelPicker } from "@liveagent/ui/pages/settings/modelPicker";
 import { AgentActivationSwitch, ConfirmDeletePopover } from "@liveagent/ui/pages/settings/shared";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { createPortal } from "react-dom";
 
 export function AgentsSection(props: SettingsSectionProps) {
@@ -33,17 +17,6 @@ export function AgentsSection(props: SettingsSectionProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<AgentPromptTemplate | null>(null);
   const [viewingTemplate, setViewingTemplate] = useState<AgentPromptTemplate | null>(null);
-  const modelOptions = useMemo(() => buildModelOptions(settings), [settings]);
-  const fastModel = settings.customSettings.subagentFastModel;
-  const fastModelValue = fastModel ? toModelValue(fastModel.customProviderId, fastModel.model) : "";
-
-  function handleFastModelChange(value: string) {
-    setSettings((prev) =>
-      updateCustomSettings(prev, {
-        subagentFastModel: parseModelValue(value) ?? undefined,
-      }),
-    );
-  }
 
   function openAdd() {
     setEditingTemplate(null);
@@ -143,40 +116,6 @@ export function AgentsSection(props: SettingsSectionProps) {
               <Plus className="h-3.5 w-3.5" />
               {t("settings.agentsAdd")}
             </Button>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.035] p-4 shadow-sm shadow-amber-500/5">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)] lg:items-center">
-            <div className="flex min-w-0 items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500">
-                <Zap className="h-[18px] w-[18px]" />
-              </div>
-              <div className="min-w-0">
-                <h4 className="text-sm font-semibold text-foreground">
-                  {t("settings.agentsFastModel")}
-                </h4>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  {t("settings.agentsFastModelHint")}
-                </p>
-              </div>
-            </div>
-            <div>
-              <ModelPicker
-                options={modelOptions}
-                value={fastModelValue}
-                onChange={handleFastModelChange}
-                placeholder={t("settings.agentsFastModelFollow")}
-                noneLabel={t("settings.agentsFastModelFollow")}
-                ariaLabel={t("settings.agentsFastModel")}
-                triggerClassName="h-9 rounded-lg border-amber-500/20 bg-background/75 text-[13px] shadow-sm"
-              />
-              {modelOptions.length === 0 ? (
-                <p className="mt-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
-                  {t("settings.agentsFastModelEmpty")}
-                </p>
-              ) : null}
-            </div>
           </div>
         </div>
 

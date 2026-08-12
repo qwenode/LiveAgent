@@ -19,6 +19,8 @@ import {
   RefreshCw,
   Search,
   Settings,
+  Sparkles,
+  Timer,
   Trash2,
   Waypoints,
   X,
@@ -42,7 +44,10 @@ import {
   type CodexRequestFormat,
   type CustomProvider,
   getDefaultUsageQueryConfig,
+  MAX_SUBAGENT_MAX_ROUNDS,
+  MIN_SUBAGENT_MAX_ROUNDS,
   MODEL_FAILOVER_QUEUE_LIMIT,
+  normalizeSubagentMaxRounds,
   type ProviderFailoverSettings,
   type ProviderId,
   type ProviderModelConfig,
@@ -2841,148 +2846,181 @@ function FailoverSettingsCard(props: SettingsSectionProps & { providerType: Prov
   );
 }
 
-function CustomSettingsDrawer(
-  props: SettingsSectionProps & { providerType: ProviderId; onClose: () => void },
-) {
-  const { settings, setSettings, providerType, onClose } = props;
+function ProviderRuntimeSettingsCards(props: SettingsSectionProps & { providerType: ProviderId }) {
+  const { settings, setSettings, providerType } = props;
   const { t } = useLocale();
-  const [closing, setClosing] = useState(false);
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const modelOptions = useMemo(() => buildModelOptions(settings), [settings]);
+  const fastModel = settings.customSettings.subagentFastModel;
+  const fastModelValue = fastModel ? toModelValue(fastModel.customProviderId, fastModel.model) : "";
+  const proactiveDelegation = settings.customSettings.subagentProactiveDelegation;
+  const maxRounds = settings.customSettings.subagentMaxRounds;
+  const [maxRoundsDraft, setMaxRoundsDraft] = useState(String(maxRounds));
   const conversationTitleModel = settings.customSettings.conversationTitleModel;
-  const selectedValue = conversationTitleModel
+  const titleModelValue = conversationTitleModel
     ? toModelValue(conversationTitleModel.customProviderId, conversationTitleModel.model)
     : "";
-  // A stored model that is no longer among the active options still shows as
-  // selected (same fallback-entry approach as the cron prompt form).
+  // Keep a removed/inactive stored title model visible until the user chooses another option.
   const titleModelOptions =
-    conversationTitleModel && !modelOptions.some((option) => option.value === selectedValue)
+    conversationTitleModel && !modelOptions.some((option) => option.value === titleModelValue)
       ? [
           ...modelOptions,
           {
-            value: selectedValue,
+            value: titleModelValue,
             label: conversationTitleModel.model,
             providerName: conversationTitleModel.customProviderId,
           },
         ]
       : modelOptions;
 
-  useEffect(
-    () => () => {
-      if (closeTimerRef.current !== null) {
-        clearTimeout(closeTimerRef.current);
-      }
-    },
-    [],
-  );
+  useEffect(() => {
+    setMaxRoundsDraft(String(maxRounds));
+  }, [maxRounds]);
 
-  function requestClose() {
-    if (closing) return;
-    setClosing(true);
-    closeTimerRef.current = setTimeout(() => {
-      onClose();
-    }, 220);
+  function commitMaxRounds() {
+    const next = normalizeSubagentMaxRounds(maxRoundsDraft);
+    setMaxRoundsDraft(String(next));
+    if (next !== maxRounds) {
+      setSettings((prev) => updateCustomSettings(prev, { subagentMaxRounds: next }));
+    }
   }
 
-  function handleTitleModelChange(value: string) {
-    // "" comes from the picker's follow-current entry and parses to undefined.
-    setSettings((prev) =>
-      updateCustomSettings(prev, {
-        conversationTitleModel: parseModelValue(value) ?? undefined,
-      }),
-    );
-  }
-
-  return createPortal(
-    <div
-      className={`${
-        closing ? "skills-drawer-backdrop-closing" : "skills-drawer-backdrop"
-      } fixed inset-0 z-50 flex justify-end bg-foreground/[0.06] backdrop-blur-md dark:bg-background/40`}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="provider-custom-settings-title"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) requestClose();
-      }}
-    >
-      <aside
-        className={`${
-          closing ? "skills-drawer-panel-closing" : "skills-drawer-panel"
-        } relative flex h-full w-full flex-col overflow-hidden border-l border-white/50 bg-white/70 shadow-[-32px_0_80px_-28px_rgba(15,23,42,0.22)] backdrop-blur-[28px] backdrop-saturate-150 sm:max-w-[440px] dark:border-foreground/[0.08] dark:bg-background/60`}
-      >
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/70 to-transparent dark:via-white/10"
-        />
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/35 via-transparent to-white/5 dark:from-white/[0.02] dark:via-transparent dark:to-transparent"
-        />
-
-        <div className="relative flex items-start gap-3 px-6 pb-4 pt-[22px]">
-          <div className="min-w-0 flex-1 max-[720px]:basis-[calc(100%-3rem)]">
-            <div
-              id="provider-custom-settings-title"
-              className="text-[17px] font-semibold leading-tight tracking-tight text-foreground/95"
-            >
-              {t("settings.customSettings")}
+  return (
+    <div className="settings-provider-runtime-cards mb-4 grid shrink-0 gap-4 md:grid-cols-2">
+      <div className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.035] p-4 shadow-sm shadow-violet-500/5">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-500">
+              <Sparkles className="h-[18px] w-[18px]" />
+            </div>
+            <div className="min-w-0">
+              <h4 className="text-sm font-semibold text-foreground">
+                {t("settings.agentsProactiveDelegation")}
+              </h4>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {t("settings.agentsProactiveDelegationHint")}
+              </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={requestClose}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-foreground/[0.06] text-muted-foreground/80 transition-colors hover:bg-foreground/[0.12] hover:text-foreground"
-            title={t("settings.closeCustomSettings")}
-            aria-label={t("settings.closeCustomSettings")}
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          <DialogSwitch
+            checked={proactiveDelegation}
+            onCheckedChange={(checked) =>
+              setSettings((prev) =>
+                updateCustomSettings(prev, { subagentProactiveDelegation: checked }),
+              )
+            }
+            ariaLabel={t("settings.agentsProactiveDelegation")}
+          />
         </div>
+      </div>
 
-        <div
-          aria-hidden="true"
-          className="relative mx-6 h-px bg-gradient-to-r from-transparent via-foreground/[0.08] to-transparent"
-        />
-
-        <div className="relative min-h-0 flex-1 overflow-y-auto px-6 py-5">
-          <section className="space-y-3">
-            <div className="rounded-2xl border border-foreground/[0.06] bg-white/60 p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04),inset_0_1px_0_rgba(255,255,255,0.65)] backdrop-blur-xl dark:border-foreground/[0.08] dark:bg-foreground/[0.03] dark:shadow-none">
-              <div className="space-y-2">
-                <Label className="text-[12.5px] font-medium text-foreground/85">
-                  {t("settings.conversationTitleModel")}
-                </Label>
-                <p className="text-[11px] leading-relaxed text-muted-foreground/80">
-                  {t("settings.conversationTitleModelHint")}
-                </p>
-                <ModelPicker
-                  options={titleModelOptions}
-                  value={selectedValue}
-                  onChange={handleTitleModelChange}
-                  placeholder={t("settings.conversationTitleModelFollowCurrent")}
-                  noneLabel={t("settings.conversationTitleModelFollowCurrent")}
-                  ariaLabel={t("settings.conversationTitleModel")}
-                  triggerClassName="h-9 rounded-lg border-foreground/10 bg-white/70 text-[13px] shadow-sm dark:bg-background/40"
-                />
-                {modelOptions.length === 0 ? (
-                  <div className="mt-1 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-[11.5px] leading-relaxed text-amber-700 dark:text-amber-300">
-                    {t("settings.customSettingsModelEmpty")}
-                  </div>
-                ) : null}
-              </div>
+      <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.035] p-4 shadow-sm shadow-amber-500/5">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(13rem,18rem)] xl:items-center">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500">
+              <Zap className="h-[18px] w-[18px]" />
             </div>
-          </section>
-
-          <section className="mt-4 space-y-3">
-            <FailoverSettingsCard
-              settings={settings}
-              setSettings={setSettings}
-              providerType={providerType}
+            <div className="min-w-0">
+              <h4 className="text-sm font-semibold text-foreground">
+                {t("settings.agentsFastModel")}
+              </h4>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {t("settings.agentsFastModelHint")}
+              </p>
+            </div>
+          </div>
+          <div>
+            <ModelPicker
+              options={modelOptions}
+              value={fastModelValue}
+              onChange={(value) =>
+                setSettings((prev) =>
+                  updateCustomSettings(prev, {
+                    subagentFastModel: parseModelValue(value) ?? undefined,
+                  }),
+                )
+              }
+              placeholder={t("settings.agentsFastModelFollow")}
+              noneLabel={t("settings.agentsFastModelFollow")}
+              ariaLabel={t("settings.agentsFastModel")}
+              triggerClassName="h-9 rounded-lg border-amber-500/20 bg-background/75 text-[13px] shadow-sm"
             />
-          </section>
+            {modelOptions.length === 0 ? (
+              <p className="mt-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+                {t("settings.agentsFastModelEmpty")}
+              </p>
+            ) : null}
+          </div>
         </div>
-      </aside>
-    </div>,
-    document.body,
+      </div>
+
+      <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.035] p-4 shadow-sm shadow-cyan-500/5">
+        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_7rem] sm:items-center">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-500">
+              <Timer className="h-[18px] w-[18px]" />
+            </div>
+            <div className="min-w-0">
+              <h4 className="text-sm font-semibold text-foreground">
+                {t("settings.agentsMaxRounds")}
+              </h4>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {t("settings.agentsMaxRoundsHint")}
+              </p>
+            </div>
+          </div>
+          <Input
+            type="number"
+            min={MIN_SUBAGENT_MAX_ROUNDS}
+            max={MAX_SUBAGENT_MAX_ROUNDS}
+            value={maxRoundsDraft}
+            onChange={(event) => setMaxRoundsDraft(event.target.value)}
+            onBlur={commitMaxRounds}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commitMaxRounds();
+            }}
+            aria-label={t("settings.agentsMaxRounds")}
+            className="h-9 rounded-lg border-cyan-500/20 bg-background/75 text-[13px] tabular-nums shadow-sm"
+          />
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-foreground/[0.06] bg-white/60 p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04),inset_0_1px_0_rgba(255,255,255,0.65)] backdrop-blur-xl dark:border-foreground/[0.08] dark:bg-foreground/[0.03] dark:shadow-none">
+        <div className="space-y-2">
+          <Label className="text-[12.5px] font-medium text-foreground/85">
+            {t("settings.conversationTitleModel")}
+          </Label>
+          <p className="text-[11px] leading-relaxed text-muted-foreground/80">
+            {t("settings.conversationTitleModelHint")}
+          </p>
+          <ModelPicker
+            options={titleModelOptions}
+            value={titleModelValue}
+            onChange={(value) =>
+              setSettings((prev) =>
+                updateCustomSettings(prev, {
+                  conversationTitleModel: parseModelValue(value) ?? undefined,
+                }),
+              )
+            }
+            placeholder={t("settings.conversationTitleModelFollowCurrent")}
+            noneLabel={t("settings.conversationTitleModelFollowCurrent")}
+            ariaLabel={t("settings.conversationTitleModel")}
+            triggerClassName="h-9 rounded-lg border-foreground/10 bg-white/70 text-[13px] shadow-sm dark:bg-background/40"
+          />
+          {modelOptions.length === 0 ? (
+            <div className="mt-1 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-[11.5px] leading-relaxed text-amber-700 dark:text-amber-300">
+              {t("settings.customSettingsModelEmpty")}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <FailoverSettingsCard
+        settings={settings}
+        setSettings={setSettings}
+        providerType={providerType}
+      />
+    </div>
   );
 }
 
@@ -3214,11 +3252,9 @@ export function ProvidersSection(
   },
 ) {
   const { settings, setSettings, initialProviderId, onInitialProviderHandled } = props;
-  const { t } = useLocale();
 
   const [activeTab, setActiveTab] = useState<ProviderId>("claude_code");
   const [modalOpen, setModalOpen] = useState(false);
-  const [customSettingsOpen, setCustomSettingsOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<CustomProvider | null>(null);
   const { usageByProvider, refreshingProviderIds, refreshProvider } = useProviderUsage(
     settings.customProviders,
@@ -3300,69 +3336,64 @@ export function ProvidersSection(
 
   return (
     <>
-      <div className="settings-provider-tabs-wrap mb-4 flex shrink-0 items-center justify-between gap-3">
-        <div className="settings-provider-tabs inline-flex h-9 items-center rounded-lg bg-muted p-1 text-muted-foreground">
-          {PROVIDER_TABS.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-              className={`inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all ${
-                activeTab === tab
-                  ? "bg-background text-foreground shadow"
-                  : "hover:text-foreground/80"
-              }`}
-            >
-              <ProviderBrandIcon type={tab} />
-              {getProviderLabel(tab)}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-1">
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <ProviderRuntimeSettingsCards
+          settings={settings}
+          setSettings={setSettings}
+          providerType={activeTab}
+        />
+
+        <div className="settings-provider-tabs-wrap mb-4 flex items-center justify-between gap-3">
+          <div className="settings-provider-tabs inline-flex h-9 items-center rounded-lg bg-muted p-1 text-muted-foreground">
+            {PROVIDER_TABS.map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setActiveTab(tab)}
+                className={`inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all ${
+                  activeTab === tab
+                    ? "bg-background text-foreground shadow"
+                    : "hover:text-foreground/80"
+                }`}
+              >
+                <ProviderBrandIcon type={tab} />
+                {getProviderLabel(tab)}
+              </button>
+            ))}
+          </div>
           <ProviderSettingsExtension
             activeTab={activeTab}
             settings={settings}
             setSettings={setSettings}
           />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 shrink-0 text-muted-foreground hover:text-foreground"
-            onClick={() => setCustomSettingsOpen(true)}
-            title={t("settings.openCustomSettings")}
-            aria-label={t("settings.openCustomSettings")}
-          >
-            <Settings className="h-4 w-4" />
-          </Button>
         </div>
-      </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden">
-        <div
-          className="flex h-full transition-transform duration-300 ease-in-out"
-          style={{ transform: `translateX(-${activeTabIndex * 100}%)` }}
-        >
-          {PROVIDER_TABS.map((tab) => (
-            <div
-              key={tab}
-              className="w-full shrink-0 overflow-hidden"
-              aria-hidden={activeTab !== tab}
-              inert={activeTab !== tab}
-            >
-              <ProviderList
-                type={tab}
-                providers={settings.customProviders}
-                onAdd={openAdd}
-                onEdit={openEdit}
-                onDelete={handleDelete}
-                onReorder={handleProviderReorder}
-                usageByProvider={usageByProvider}
-                refreshingProviderIds={refreshingProviderIds}
-                onRefreshUsage={(providerId) => void refreshProvider(providerId)}
-              />
-            </div>
-          ))}
+        <div className="min-h-[24rem] overflow-hidden">
+          <div
+            className="flex transition-transform duration-300 ease-in-out"
+            style={{ transform: `translateX(-${activeTabIndex * 100}%)` }}
+          >
+            {PROVIDER_TABS.map((tab) => (
+              <div
+                key={tab}
+                className="w-full shrink-0 overflow-hidden"
+                aria-hidden={activeTab !== tab}
+                inert={activeTab !== tab}
+              >
+                <ProviderList
+                  type={tab}
+                  providers={settings.customProviders}
+                  onAdd={openAdd}
+                  onEdit={openEdit}
+                  onDelete={handleDelete}
+                  onReorder={handleProviderReorder}
+                  usageByProvider={usageByProvider}
+                  refreshingProviderIds={refreshingProviderIds}
+                  onRefreshUsage={(providerId) => void refreshProvider(providerId)}
+                />
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -3372,14 +3403,6 @@ export function ProvidersSection(
           initialData={editingProvider ?? undefined}
           onSave={handleSave}
           onClose={closeModal}
-        />
-      ) : null}
-      {customSettingsOpen ? (
-        <CustomSettingsDrawer
-          settings={settings}
-          setSettings={setSettings}
-          providerType={activeTab}
-          onClose={() => setCustomSettingsOpen(false)}
         />
       ) : null}
     </>

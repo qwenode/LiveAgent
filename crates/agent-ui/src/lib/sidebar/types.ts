@@ -13,6 +13,8 @@ export type SidebarConversation = {
   updatedAt: number;
   isPinned?: boolean;
   pinnedAt?: number | null;
+  isArchived?: boolean;
+  archivedAt?: number | null;
   isShared?: boolean;
   selectedModelJson?: string;
   // Local-only draft/persisting row; survives authoritative reconciles until
@@ -74,12 +76,22 @@ export type SidebarRunningItem = {
   updatedAt?: number;
 };
 
+export type SidebarRunOutcome = "success" | "failure" | "cancelled";
+
+export type SidebarUnseenRunResult = {
+  outcome: SidebarRunOutcome;
+  runId: string | null;
+  workdir: string | null;
+  updatedAt: number;
+};
+
 export type SidebarBackendEvent =
   | { kind: "upsert"; conversationId: string; conversation: SidebarConversation }
   | { kind: "delete"; conversationId: string }
   | {
       kind: "running";
       conversationId: string;
+      runId?: string | null;
       workdir?: string | null;
       updatedAt?: number;
     }

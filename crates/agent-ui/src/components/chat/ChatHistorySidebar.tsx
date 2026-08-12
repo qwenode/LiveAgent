@@ -19,6 +19,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { useLocale } from "../../i18n";
 import { cn } from "../../lib/shared/utils";
 import type {
@@ -30,6 +31,8 @@ import type {
   SidebarConversation,
   SidebarListStatus,
   SidebarMutationKind,
+  SidebarRunOutcome,
+  SidebarUnseenRunResult,
   SidebarWorkspaceFeed,
 } from "../../lib/sidebar/types";
 import {
@@ -80,6 +83,7 @@ type ChatHistorySidebarProps = {
   // Per-row in-flight mutations: only that row's menu/inputs disable.
   busyConversationIds: ReadonlyMap<string, SidebarMutationKind>;
   runningConversationIds: ReadonlySet<string>;
+  unseenRunResults: ReadonlyMap<string, SidebarUnseenRunResult>;
   listStatus: SidebarListStatus;
   // Identity of the current list scope (workspace/text mode). A change
   // remounts the list content with a soft enter transition and resets scroll.
@@ -108,6 +112,7 @@ type ChatHistorySidebarProps = {
   activeProjectId?: string;
   missingProjectPathKeys: ReadonlySet<string>;
   runningProjectPathKeys: ReadonlySet<string>;
+  unseenProjectOutcomes: ReadonlyMap<string, SidebarRunOutcome>;
   projectRenamingId?: string | null;
   projectRenameDraft?: string;
   projectsCollapsed?: boolean;
@@ -134,6 +139,8 @@ type ChatHistorySidebarProps = {
   onRemoveProject?: (project: WorkspaceProject) => void;
   onArchiveProject?: (project: WorkspaceProject) => void;
   onUnarchiveProject?: (project: WorkspaceProject) => void;
+  onArchiveProjectTasks?: (project: WorkspaceProject) => void;
+  onCleanupProjectTasks?: (project: WorkspaceProject) => void;
   // Path keys of archived workspaces; those rows render disabled in a
   // collapsed group at the end of the list.
   archivedProjectPathKeys?: ReadonlySet<string>;
@@ -229,6 +236,7 @@ type HistoryRowProps = {
   isActive: boolean;
   isBusy: boolean;
   isRunning: boolean;
+  unseenOutcome: SidebarRunOutcome | null;
   isDeleteDisabled: boolean;
   canShareConversation: boolean;
   isRenaming: boolean;
@@ -257,6 +265,23 @@ type HistoryRowProps = {
   onMenuOpenChange: (id: string, open: boolean) => void;
 };
 
+function unseenOutcomeDotClass(outcome: SidebarRunOutcome | null): string | undefined {
+  if (outcome === "failure") return "bg-red-500 dark:bg-red-400";
+  if (outcome === "success") return "bg-emerald-500 dark:bg-emerald-400";
+  if (outcome === "cancelled") return "bg-amber-500 dark:bg-amber-400";
+  return undefined;
+}
+
+function unseenOutcomeLabel(
+  outcome: SidebarRunOutcome | null,
+  t: (key: string) => string,
+): string | undefined {
+  if (outcome === "failure") return t("chat.statusRunFailedUnseen");
+  if (outcome === "success") return t("chat.statusRunCompletedUnseen");
+  if (outcome === "cancelled") return t("chat.statusRunCancelledUnseen");
+  return undefined;
+}
+
 function areRenderedHistoryItemsEqual(previous: SidebarConversation, next: SidebarConversation) {
   return (
     previous.id === next.id &&
@@ -274,6 +299,7 @@ function areHistoryRowPropsEqual(previous: HistoryRowProps, next: HistoryRowProp
     previous.isActive === next.isActive &&
     previous.isBusy === next.isBusy &&
     previous.isRunning === next.isRunning &&
+    previous.unseenOutcome === next.unseenOutcome &&
     previous.isDeleteDisabled === next.isDeleteDisabled &&
     previous.canShareConversation === next.canShareConversation &&
     previous.isRenaming === next.isRenaming &&
@@ -309,6 +335,7 @@ const HistoryRow = memo(function HistoryRow(props: HistoryRowProps) {
     isActive,
     isBusy,
     isRunning,
+    unseenOutcome,
     isDeleteDisabled,
     canShareConversation,
     isRenaming,
@@ -656,6 +683,8 @@ const HistoryRow = memo(function HistoryRow(props: HistoryRowProps) {
             : "text-foreground/85 hover:bg-foreground/[0.05] hover:text-foreground",
         isSelectionMode && isSelectionDisabled && "opacity-50",
         !isSelectionMode && shouldShowMobilePressFeedback && "bg-foreground/[0.09] text-foreground",
+        !isSelectionMode && unseenOutcome === "failure" &&
+          "border border-red-500/30 bg-red-500/[0.08] text-red-700 hover:bg-red-500/[0.12] dark:border-red-400/30 dark:bg-red-400/[0.08] dark:text-red-300 dark:hover:bg-red-400/[0.12]",
       )}
     >
       {isRenaming ? (
@@ -732,7 +761,16 @@ const HistoryRow = memo(function HistoryRow(props: HistoryRowProps) {
                 aria-pressed={isSelectionMode ? isSelected : undefined}
                 disabled={isInteractionDisabled || (isSelectionMode && isSelectionDisabled)}
                 className="chat-history-row-title-button flex h-[30px] w-full min-w-0 items-center gap-2 rounded-md px-2 text-left outline-hidden transition-colors focus-visible:ring-2 focus-visible:ring-ring"
-                title={item.title}
+                title={
+                  unseenOutcome && !isRunning
+                    ? `${item.title} · ${unseenOutcomeLabel(unseenOutcome, t)}`
+                    : item.title
+                }
+                aria-label={
+                  unseenOutcome && !isRunning
+                    ? `${item.title} · ${unseenOutcomeLabel(unseenOutcome, t)}`
+                    : undefined
+                }
               >
                 {isSelectionMode ? (
                   <span
@@ -746,6 +784,15 @@ const HistoryRow = memo(function HistoryRow(props: HistoryRowProps) {
                   >
                     {isSelected ? <Check className="h-3 w-3" /> : null}
                   </span>
+                ) : null}
+                {unseenOutcome && !isRunning ? (
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "h-2 w-2 shrink-0 rounded-full",
+                      unseenOutcomeDotClass(unseenOutcome),
+                    )}
+                  />
                 ) : null}
                 <span className="sidebar-project-name-fade min-w-0 flex-1 overflow-hidden whitespace-nowrap text-[calc(14px*var(--zone-font-scale,1))] font-normal leading-5">
                   {item.title}
@@ -957,6 +1004,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   isActive: boolean;
   isMissing: boolean;
   isRunning: boolean;
+  unseenOutcome: SidebarRunOutcome | null;
   isRenaming: boolean;
   isPendingRemove: boolean;
   isInteractionDisabled: boolean;
@@ -978,6 +1026,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   canArchive: boolean;
   onArchiveProject: (project: WorkspaceProject) => void;
   onUnarchiveProject: (project: WorkspaceProject) => void;
+  onOpenTaskContextMenu?: (project: WorkspaceProject, position: { x: number; y: number }) => void;
   onSetPendingRemove: (projectId: string | null) => void;
   menuOpen: boolean;
   onMenuOpenChange: (projectId: string, open: boolean) => void;
@@ -987,6 +1036,7 @@ const ProjectRow = memo(function ProjectRow(props: {
     isActive,
     isMissing,
     isRunning,
+    unseenOutcome,
     isRenaming,
     isPendingRemove,
     isInteractionDisabled,
@@ -1005,6 +1055,7 @@ const ProjectRow = memo(function ProjectRow(props: {
     canArchive,
     onArchiveProject,
     onUnarchiveProject,
+    onOpenTaskContextMenu,
     onSetPendingRemove,
     menuOpen,
     onMenuOpenChange,
@@ -1052,6 +1103,22 @@ const ProjectRow = memo(function ProjectRow(props: {
       }, 220);
     },
     [isArchived, isInteractionDisabled, onSelectProject, project],
+  );
+
+  const handleProjectContextMenu = useCallback(
+    (event: ReactMouseEvent<HTMLElement>) => {
+      if (isInteractionDisabled || !onOpenTaskContextMenu) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (projectClickTimerRef.current !== null) {
+        clearTimeout(projectClickTimerRef.current);
+        projectClickTimerRef.current = null;
+      }
+      onOpenTaskContextMenu(project, { x: event.clientX, y: event.clientY });
+    },
+    [isInteractionDisabled, onOpenTaskContextMenu, project],
   );
 
   const handleProjectDoubleClick = useCallback(
@@ -1178,8 +1245,10 @@ const ProjectRow = memo(function ProjectRow(props: {
   }
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: The wrapper owns the row-level native context menu; keyboard activation remains on the inner button.
     <div
       ref={rowRef}
+      onContextMenu={handleProjectContextMenu}
       className={cn(
         "group/project grid h-[30px] grid-cols-[minmax(0,1fr)_auto] items-center rounded-lg pl-1 transition-colors",
         isMissing
@@ -1242,6 +1311,11 @@ const ProjectRow = memo(function ProjectRow(props: {
               <button
                 type="button"
                 aria-disabled={isArchived || undefined}
+                aria-label={
+                  unseenOutcome && !isRunning
+                    ? `${project.name} · ${unseenOutcomeLabel(unseenOutcome, t)}`
+                    : undefined
+                }
                 className={cn(
                   "flex h-[30px] min-w-0 items-center gap-3 rounded-md px-2 text-left outline-hidden transition-colors focus-visible:ring-2 focus-visible:ring-ring",
                   isMissing
@@ -1266,6 +1340,15 @@ const ProjectRow = memo(function ProjectRow(props: {
                           : "text-foreground/65",
                   )}
                 />
+                {unseenOutcome && !isRunning ? (
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "h-2 w-2 shrink-0 rounded-full",
+                      unseenOutcomeDotClass(unseenOutcome),
+                    )}
+                  />
+                ) : null}
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate text-[calc(14px*var(--zone-font-scale,1))] font-normal leading-5",
@@ -1288,6 +1371,11 @@ const ProjectRow = memo(function ProjectRow(props: {
             >
               <Tooltip.Popup className="w-64 rounded-xl border border-border/60 bg-popover px-3 py-2.5 text-popover-foreground shadow-lg outline-hidden data-[open]:animate-in data-[closed]:animate-out data-[closed]:fade-out-0 data-[open]:fade-in-0 data-[closed]:zoom-out-95 data-[open]:zoom-in-95">
                 <p className="truncate text-sm font-semibold leading-5">{project.name}</p>
+                {unseenOutcome && !isRunning ? (
+                  <p className="mt-0.5 text-xs font-medium leading-4 text-muted-foreground">
+                    {unseenOutcomeLabel(unseenOutcome, t)}
+                  </p>
+                ) : null}
                 <p className="mt-1 break-all text-xs leading-4 text-muted-foreground">
                   {project.path}
                 </p>
@@ -1525,6 +1613,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
     currentConversationId,
     busyConversationIds,
     runningConversationIds,
+    unseenRunResults,
     listStatus,
     scopeKey = "",
     totalItems,
@@ -1544,6 +1633,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
     activeProjectId,
     missingProjectPathKeys,
     runningProjectPathKeys,
+    unseenProjectOutcomes,
     projectRenamingId = null,
     projectRenameDraft = "",
     projectsCollapsed = false,
@@ -1570,6 +1660,8 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
     onRemoveProject,
     onArchiveProject,
     onUnarchiveProject,
+    onArchiveProjectTasks,
+    onCleanupProjectTasks,
     archivedProjectPathKeys = EMPTY_PROJECT_PATH_KEYS,
     onNewConversation,
     onSelectConversation,
@@ -1611,6 +1703,12 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
   const [showAllProjects, setShowAllProjects] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [openProjectMenuId, setOpenProjectMenuId] = useState<string | null>(null);
+  const [projectTaskContextMenu, setProjectTaskContextMenu] = useState<{
+    project: WorkspaceProject;
+    x: number;
+    y: number;
+  } | null>(null);
+  const projectTaskContextMenuRef = useRef<HTMLDivElement | null>(null);
   const [isMobileMenuLayout, setIsMobileMenuLayout] = useState(isMobileSidebarLayout);
   const [projectSectionHeight, setProjectSectionHeight] = useState<number | null>(null);
   const [isProjectSectionResizing, setIsProjectSectionResizing] = useState(false);
@@ -1861,6 +1959,33 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
   const handleUnarchiveProject = useStableEvent((project: WorkspaceProject) => {
     if (!sectionsDisabled) {
       onUnarchiveProject?.(project);
+    }
+  });
+  const handleOpenProjectTaskContextMenu = useStableEvent(
+    (project: WorkspaceProject, position: { x: number; y: number }) => {
+      if (sectionsDisabled || (!onArchiveProjectTasks && !onCleanupProjectTasks)) {
+        return;
+      }
+      setOpenProjectMenuId(null);
+      setProjectTaskContextMenu({
+        project,
+        x: Math.max(8, Math.min(position.x, window.innerWidth - 196)),
+        y: Math.max(8, Math.min(position.y, window.innerHeight - 92)),
+      });
+    },
+  );
+  const handleArchiveProjectTasks = useStableEvent(() => {
+    const project = projectTaskContextMenu?.project;
+    setProjectTaskContextMenu(null);
+    if (!sectionsDisabled && project) {
+      onArchiveProjectTasks?.(project);
+    }
+  });
+  const handleCleanupProjectTasks = useStableEvent(() => {
+    const project = projectTaskContextMenu?.project;
+    setProjectTaskContextMenu(null);
+    if (!sectionsDisabled && project) {
+      onCleanupProjectTasks?.(project);
     }
   });
   const exitSelectionMode = useCallback(() => {
@@ -2132,6 +2257,9 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
     if (open && sectionsDisabled) {
       return;
     }
+    if (open) {
+      setProjectTaskContextMenu(null);
+    }
     setOpenProjectMenuId((current) => {
       if (open) {
         return projectId;
@@ -2156,8 +2284,41 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
     if (!isOpen) {
       setOpenMenuId(null);
       setOpenProjectMenuId(null);
+      setProjectTaskContextMenu(null);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!projectTaskContextMenu) {
+      return;
+    }
+    const close = () => setProjectTaskContextMenu(null);
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && projectTaskContextMenuRef.current?.contains(target)) {
+        return;
+      }
+      close();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("blur", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [projectTaskContextMenu]);
 
   useEffect(() => {
     if (!sectionsDisabled) {
@@ -2166,6 +2327,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
 
     setOpenMenuId(null);
     setOpenProjectMenuId(null);
+    setProjectTaskContextMenu(null);
     setPendingDeleteId(null);
     setPendingProjectRemoveId(null);
     exitSelectionMode();
@@ -2471,6 +2633,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
         isActive={currentConversationId === item.id}
         isBusy={busyConversationIds.has(item.id)}
         isRunning={runningConversationIds.has(item.id)}
+        unseenOutcome={unseenRunResults.get(item.id)?.outcome ?? null}
         isDeleteDisabled={runningConversationIds.has(item.id)}
         canShareConversation={canShareConversations}
         isRenaming={renamingId === item.id}
@@ -2530,6 +2693,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
       renameDraft,
       renamingId,
       runningConversationIds,
+      unseenRunResults,
       selectableConversationIds,
       selectedConversationIds,
       selectionMode,
@@ -2575,6 +2739,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
               isActive={activeProjectId === project.id}
               isMissing={missingProjectPathKeys.has(pathKey)}
               isRunning={runningProjectPathKeys.has(pathKey)}
+              unseenOutcome={unseenProjectOutcomes.get(pathKey) ?? null}
               isRenaming={projectRenamingId === project.id}
               isPendingRemove={pendingProjectRemoveId === project.id}
               isInteractionDisabled={sectionsDisabled}
@@ -2595,6 +2760,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
               canArchive={canArchiveProjects}
               onArchiveProject={handleArchiveProject}
               onUnarchiveProject={handleUnarchiveProject}
+              onOpenTaskContextMenu={handleOpenProjectTaskContextMenu}
               onSetPendingRemove={handleSetPendingProjectRemove}
               menuOpen={!sectionsDisabled && openProjectMenuId === project.id}
               onMenuOpenChange={handleProjectMenuOpenChange}
@@ -3021,6 +3187,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
                                 isActive={activeProjectId === project.id}
                                 isMissing={missingProjectPathKeys.has(pathKey)}
                                 isRunning={runningProjectPathKeys.has(pathKey)}
+                                unseenOutcome={unseenProjectOutcomes.get(pathKey) ?? null}
                                 isRenaming={projectRenamingId === project.id}
                                 isPendingRemove={pendingProjectRemoveId === project.id}
                                 isInteractionDisabled={sectionsDisabled}
@@ -3045,6 +3212,7 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
                                 canArchive={false}
                                 onArchiveProject={handleArchiveProject}
                                 onUnarchiveProject={handleUnarchiveProject}
+                                onOpenTaskContextMenu={handleOpenProjectTaskContextMenu}
                                 onSetPendingRemove={handleSetPendingProjectRemove}
                                 menuOpen={!sectionsDisabled && openProjectMenuId === project.id}
                                 onMenuOpenChange={handleProjectMenuOpenChange}
@@ -3381,6 +3549,41 @@ export const ChatHistorySidebar = memo(function ChatHistorySidebar(props: ChatHi
           {footerTrailing}
         </div>
       </div>
+      {projectTaskContextMenu && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={projectTaskContextMenuRef}
+              role="menu"
+              aria-label={projectTaskContextMenu.project.name}
+              className="sidebar-context-menu fixed z-[120] min-w-[11rem] select-none overflow-hidden rounded-xl border border-border/60 bg-background/95 p-1 text-popover-foreground shadow-2xl backdrop-blur-xl"
+              style={{ left: projectTaskContextMenu.x, top: projectTaskContextMenu.y }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[calc(13px*var(--zone-font-scale,1))] text-foreground/90 transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground focus-visible:outline-none"
+                onClick={handleArchiveProjectTasks}
+              >
+                <Archive className="h-3.5 w-3.5 shrink-0" />
+                {t("chat.workspaceArchiveTasks")}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[calc(13px*var(--zone-font-scale,1))] text-destructive transition-colors hover:bg-destructive/10 focus-visible:bg-destructive/10 focus-visible:outline-none"
+                onClick={handleCleanupProjectTasks}
+              >
+                <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                {t("chat.workspaceCleanupTasks")}
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
       {bulkDeleteDialog}
     </aside>
   );
