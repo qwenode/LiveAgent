@@ -73,6 +73,8 @@ export function useSharedHistory(params: UseSharedHistoryParams) {
     const runtimeGatewayUrl = sharedManagerGatewayUrl.trim();
     return statusGatewayUrl || runtimeGatewayUrl || remoteSettings.gatewayUrl;
   }, [remoteRuntimeStatus.gatewayUrl, remoteSettings.gatewayUrl, sharedManagerGatewayUrl]);
+  // gatewayUrl may omit the separately configured listener port; share links need it.
+  const sharedManagerShareOriginPort = remoteSettings.gatewayPort;
   const canShareHistory =
     remoteRuntimeStatus.online === true &&
     remoteRuntimeStatus.enabled === true &&
@@ -450,6 +452,7 @@ export function useSharedHistory(params: UseSharedHistoryParams) {
     sharedManagerErrors,
     sharedManagerGatewayUrlLoading,
     sharedManagerShareOrigin,
+    sharedManagerShareOriginPort,
     sharedHistoryItems,
     removeSharedHistoryItems,
     markSharedConversation,
