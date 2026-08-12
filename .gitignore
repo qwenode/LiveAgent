@@ -41,3 +41,4 @@ chatroom
 *.sw?
 .pnpm-store
 workspace.zip
+.xspec/
