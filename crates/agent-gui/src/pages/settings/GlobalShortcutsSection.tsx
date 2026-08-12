@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Keyboard, MonitorSmartphone, Pin, SquarePen, X, Zap } from "../../components/icons";
+import { Keyboard, MonitorSmartphone, Pin, SquarePen, X } from "../../components/icons";
 import { inferRuntimePlatform } from "../../lib/runtimePlatform";
 import {
   applyGlobalShortcuts,
@@ -425,12 +425,6 @@ export function GlobalShortcutsSection() {
     desc: string;
   }> = [
     {
-      id: "summon",
-      icon: <Zap className="h-4.5 w-4.5" />,
-      label: t("settings.shortcutSummon"),
-      desc: t("settings.shortcutSummonDesc"),
-    },
-    {
       id: "toggle",
       icon: <MonitorSmartphone className="h-4.5 w-4.5" />,
       label: t("settings.shortcutToggle"),
@@ -493,7 +487,7 @@ export function GlobalShortcutsSection() {
     setRecording(action);
     setDraft({ mods: [], main: null });
     setStatus(null);
-    // 录制期间挂起全局快捷键，避免录制现有组合时窗口被隐藏/呼出。
+    // 录制期间挂起可配置快捷键，避免现有组合被触发；固定 F2 始终保持全局注册。
     void applyGlobalShortcuts({});
   }, []);
 
@@ -533,6 +527,7 @@ export function GlobalShortcutsSection() {
 
   const clearBinding = useCallback(
     (action: GlobalShortcutAction) => {
+      if (action === "toggle") return;
       const next = { ...bindingsRef.current };
       delete next[action];
       setStatus(null);
@@ -543,6 +538,7 @@ export function GlobalShortcutsSection() {
 
   const toggleBinding = useCallback(
     (action: GlobalShortcutAction) => {
+      if (action === "toggle") return;
       const current = bindingsRef.current[action];
       if (!current) return;
       setStatus(null);
@@ -657,7 +653,6 @@ export function GlobalShortcutsSection() {
   // 无修饰键按住时显示"裸键"快捷键（如 F10）；按住修饰键（如 Alt）则切到该层，
   // 显示修饰键完全匹配的组合；其余组合在缺失的修饰键键帽上以彩点提示。
   const actionLabelById: Record<GlobalShortcutAction, string> = {
-    summon: t("settings.shortcutSummon"),
     toggle: t("settings.shortcutToggle"),
     newChat: t("settings.shortcutNewChat"),
     pin: t("settings.shortcutPin"),
@@ -850,9 +845,10 @@ export function GlobalShortcutsSection() {
 
         <div className="space-y-2">
           {actionMeta.map((action) => {
-            const isRecording = recording === action.id;
+            const isFixed = action.id === "toggle";
+            const isRecording = !isFixed && recording === action.id;
             const binding = bindings[action.id];
-            const bindingDisabled = Boolean(binding) && !binding?.enabled;
+            const bindingDisabled = !isFixed && Boolean(binding) && !binding?.enabled;
             const tokens = isRecording
               ? draftTokens
               : binding
@@ -871,6 +867,7 @@ export function GlobalShortcutsSection() {
                 <button
                   type="button"
                   onClick={() => {
+                    if (isFixed) return;
                     if (isRecording) {
                       // 点击录制中的行 = 隐式确认（有主键保存，否则取消）。
                       stopRecording("implicit");
@@ -878,7 +875,7 @@ export function GlobalShortcutsSection() {
                       startRecording(action.id);
                     }
                   }}
-                  className="group flex min-w-0 flex-1 items-center justify-between gap-3 px-3.5 py-3 text-left"
+                  className={`group flex min-w-0 flex-1 items-center justify-between gap-3 px-3.5 py-3 text-left ${isFixed ? "cursor-default" : ""}`}
                 >
                   <div className="flex min-w-0 items-center gap-3">
                     <div
@@ -925,7 +922,7 @@ export function GlobalShortcutsSection() {
                     ) : null}
                   </div>
                 </button>
-                {!isRecording && binding ? (
+                {!isFixed && !isRecording && binding ? (
                   <>
                     <AgentActivationSwitch
                       checked={binding.enabled}

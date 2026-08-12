@@ -15,7 +15,10 @@ export async function listChatHistoryIdsForProjectPath(projectPath: string) {
   const ids: string[] = [];
   const seen = new Set<string>();
   for (let pageNumber = 1; ; pageNumber += 1) {
-    const page = await listChatHistory(pageNumber, PROJECT_HISTORY_DELETE_PAGE_SIZE, { cwd });
+    const page = await listChatHistory(pageNumber, PROJECT_HISTORY_DELETE_PAGE_SIZE, {
+      cwd,
+      includeArchived: true,
+    });
     for (const item of page.items) {
       const id = item.id.trim();
       if (!id || seen.has(id)) continue;

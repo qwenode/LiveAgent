@@ -479,6 +479,75 @@ test("custom settings selected models only keep enabled provider models", () => 
   assert.equal(cleared.customSettings.subagentFastModel, undefined);
 });
 
+test("subagent max rounds defaults to 50 and clamps persisted values", () => {
+  assert.equal(settings.getDefaultSettings().customSettings.subagentMaxRounds, 50);
+  assert.equal(
+    settings.normalizeSettings({ customSettings: { subagentMaxRounds: 80 } }).customSettings
+      .subagentMaxRounds,
+    80,
+  );
+  assert.equal(
+    settings.normalizeSettings({ customSettings: { subagentMaxRounds: 1 } }).customSettings
+      .subagentMaxRounds,
+    2,
+  );
+  assert.equal(
+    settings.normalizeSettings({ customSettings: { subagentMaxRounds: 0 } }).customSettings
+      .subagentMaxRounds,
+    2,
+  );
+  assert.equal(
+    settings.normalizeSettings({ customSettings: { subagentMaxRounds: -3 } }).customSettings
+      .subagentMaxRounds,
+    2,
+  );
+  assert.equal(
+    settings.normalizeSettings({ customSettings: { subagentMaxRounds: 999 } }).customSettings
+      .subagentMaxRounds,
+    200,
+  );
+  for (const value of [undefined, "", "nope", null]) {
+    assert.equal(
+      settings.normalizeSettings({ customSettings: { subagentMaxRounds: value } }).customSettings
+        .subagentMaxRounds,
+      50,
+    );
+  }
+});
+
+test("subagent proactive delegation defaults off and only accepts strict true", () => {
+  assert.equal(settings.getDefaultSettings().customSettings.subagentProactiveDelegation, false);
+  assert.equal(
+    settings.normalizeSettings({
+      customSettings: { subagentProactiveDelegation: true },
+    }).customSettings.subagentProactiveDelegation,
+    true,
+  );
+  for (const value of [undefined, false, "true", 1, null]) {
+    assert.equal(
+      settings.normalizeSettings({
+        customSettings: { subagentProactiveDelegation: value },
+      }).customSettings.subagentProactiveDelegation,
+      false,
+    );
+  }
+
+  const current = settings.normalizeSettings({
+    customSettings: { subagentProactiveDelegation: true },
+  });
+  assert.equal(
+    sync.applyGatewaySettingsSyncPayload(current, {
+      customSettings: { subagentProactiveDelegation: true },
+    }).customSettings.subagentProactiveDelegation,
+    true,
+  );
+  assert.equal(
+    sync.applyGatewaySettingsSyncPayload(current, { customSettings: {} }).customSettings
+      .subagentProactiveDelegation,
+    false,
+  );
+});
+
 test("chat runtime controls default and follow provider model reasoning support", () => {
   const defaults = settings.getDefaultSettings();
   assert.deepEqual(defaults.chatRuntimeControls, {
@@ -867,6 +936,8 @@ test("gateway settings sync payload redacts provider api keys", () => {
     customSettings: {
       conversationTitleModel: { customProviderId: "provider-1", model: "gpt-5" },
       subagentFastModel: { customProviderId: "provider-1", model: "gpt-5" },
+      subagentProactiveDelegation: true,
+      subagentMaxRounds: 75,
       rightDock: {
         width: 612,
         projects: {
@@ -927,6 +998,8 @@ test("gateway settings sync payload redacts provider api keys", () => {
     customProviderId: "provider-1",
     model: "gpt-5",
   });
+  assert.equal(payload.customSettings.subagentProactiveDelegation, true);
+  assert.equal(payload.customSettings.subagentMaxRounds, 75);
   assert.deepEqual(payload.customSettings.chatSidebar, {
     projectsCollapsed: false,
     recentCollapsed: false,

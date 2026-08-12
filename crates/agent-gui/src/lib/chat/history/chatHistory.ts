@@ -32,6 +32,8 @@ export type ChatHistorySummary = {
   updatedAt: number;
   isPinned?: boolean;
   pinnedAt?: number | null;
+  isArchived?: boolean;
+  archivedAt?: number | null;
   isShared?: boolean;
   isPending?: boolean;
 };
@@ -53,6 +55,7 @@ export type ChatHistoryListPage = {
 export type ChatHistoryListFilter = {
   cwd?: string;
   cwdEmpty?: boolean;
+  includeArchived?: boolean;
 };
 
 export type ChatHistoryWorkdirSummary = {
@@ -268,6 +271,7 @@ export async function listChatHistory(
     pageSize,
     cwd: filter?.cwd,
     cwdEmpty: filter?.cwdEmpty,
+    includeArchived: filter?.includeArchived,
   });
 }
 
@@ -522,6 +526,19 @@ export async function setChatHistoryShare(
       redactToolContent: options?.redactToolContent,
     }),
   );
+}
+
+export type ChatHistoryProjectMutationResult = {
+  conversationIds: string[];
+  affectedCount: number;
+};
+
+export async function archiveChatHistoryByCwd(cwd: string) {
+  return invoke<ChatHistoryProjectMutationResult>("chat_history_archive_cwd", { cwd });
+}
+
+export async function cleanupChatHistoryByCwd(cwd: string) {
+  return invoke<ChatHistoryProjectMutationResult>("chat_history_cleanup_cwd", { cwd });
 }
 
 export async function deleteChatHistory(id: string) {

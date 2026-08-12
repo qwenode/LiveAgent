@@ -42,6 +42,49 @@ function createErrorStream(errorMessage) {
   };
 }
 
+function createResultOnlyErrorStream(errorMessage) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { type: "start", partial: createAssistant(undefined, "stop") };
+    },
+    async result() {
+      return createAssistant(undefined, "error", { errorMessage });
+    },
+  };
+}
+
+function createThrowingIteratorStream(errorMessage, text) {
+  const partial = createAssistant(text, "stop");
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { type: "start", partial: { ...partial, content: [] } };
+      if (text) {
+        yield {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: text,
+          partial,
+        };
+      }
+      throw new Error(errorMessage);
+    },
+    async result() {
+      throw new Error("result() should not be reached after iterator failure");
+    },
+  };
+}
+
+function createRejectingResultStream(errorMessage) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { type: "start", partial: createAssistant(undefined, "stop") };
+    },
+    async result() {
+      throw new Error(errorMessage);
+    },
+  };
+}
+
 function createSuccessStream(text) {
   const assistant = createAssistant(text, "stop");
   return {
@@ -127,6 +170,89 @@ async function collectEvents(eventStream) {
   for await (const event of eventStream) events.push(event);
   return events;
 }
+
+test("withStreamRetry retries a network error returned only by result()", async () => {
+  let calls = 0;
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      if (calls === 1) return createResultOnlyErrorStream("network error");
+      return createSuccessStream("recovered from result-only network error");
+    },
+    { maxAttempts: 2 },
+  );
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 2);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["start", "text_delta", "done"],
+  );
+  assert.equal((await wrapped.result()).content[0].text, "recovered from result-only network error");
+});
+
+test("withStreamRetry retries a network error thrown by the async iterator", async () => {
+  let calls = 0;
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      if (calls === 1) return createThrowingIteratorStream("network error");
+      return createSuccessStream("recovered from iterator network error");
+    },
+    { maxAttempts: 2 },
+  );
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 2);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["start", "text_delta", "done"],
+  );
+  assert.equal((await wrapped.result()).content[0].text, "recovered from iterator network error");
+});
+
+test("withStreamRetry retries a network error thrown by result()", async () => {
+  let calls = 0;
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      if (calls === 1) return createRejectingResultStream("network error");
+      return createSuccessStream("recovered from rejected result");
+    },
+    { maxAttempts: 2 },
+  );
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 2);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["start", "text_delta", "done"],
+  );
+  assert.equal((await wrapped.result()).content[0].text, "recovered from rejected result");
+});
+
+test("withStreamRetry retries a network error thrown while creating the stream", async () => {
+  let calls = 0;
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      if (calls === 1) throw new Error("network error");
+      return createSuccessStream("recovered from factory network error");
+    },
+    {
+      maxAttempts: 2,
+      model: { api: "openai-responses", provider: "openai", id: "test-model" },
+    },
+  );
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 2);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["start", "text_delta", "done"],
+  );
+  assert.equal((await wrapped.result()).content[0].text, "recovered from factory network error");
+});
 
 test("withStreamRetry succeeds after N retryable errors without leaking failed-attempt events", async () => {
   let calls = 0;
@@ -225,6 +351,50 @@ test("withStreamRetry retries the generic terminal-less upstream wording", async
   const final = await wrapped.result();
   assert.equal(final.stopReason, "stop");
   assert.equal(final.content[0].text, "recovered from terminal-less stream");
+});
+
+test("withStreamRetry retries stream_error unexpected EOF before content commits", async () => {
+  let calls = 0;
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      if (calls === 1) return createErrorStream("stream_error: unexpected EOF");
+      return createSuccessStream("recovered from unexpected EOF");
+    },
+    { maxAttempts: 2 },
+  );
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 2);
+  assert.deepEqual(events.map((event) => event.type), ["start", "text_delta", "done"]);
+  assert.equal((await wrapped.result()).content[0].text, "recovered from unexpected EOF");
+});
+
+test("withStreamRetry retries bare unexpected EOF before content commits", async () => {
+  let calls = 0;
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      if (calls === 1) return createErrorStream("unexpected EOF");
+      return createSuccessStream("recovered from bare EOF");
+    },
+    { maxAttempts: 2 },
+  );
+
+  await collectEvents(wrapped);
+  assert.equal(calls, 2);
+});
+
+test("withStreamRetry does not retry unexpected EOF after content commits", async () => {
+  let calls = 0;
+  const wrapped = withStreamRetry(() => {
+    calls += 1;
+    return createErrorAfterContentStream("partial", "stream_error: unexpected EOF");
+  }, { maxAttempts: 2 });
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 1);
+  assert.deepEqual(events.map((event) => event.type), ["start", "text_delta", "error"]);
 });
 
 test("withStreamRetry retries a clean empty response before content commits", async () => {
@@ -375,6 +545,28 @@ test("withStreamRetry does not retry once content has been committed", async () 
   assert.equal(final.stopReason, "error");
 });
 
+test("withStreamRetry does not retry an iterator network error after content commits", async () => {
+  let calls = 0;
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      return createThrowingIteratorStream("network error", "partial");
+    },
+    { maxAttempts: 3 },
+  );
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 1);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["start", "text_delta", "error"],
+  );
+  const final = await wrapped.result();
+  assert.equal(final.stopReason, "error");
+  assert.equal(final.errorMessage, "network error");
+  assert.equal(final.content[0].text, "partial");
+});
+
 test("withStreamRetry never retries an aborted stream", async () => {
   let calls = 0;
   const wrapped = withStreamRetry(() => {
@@ -411,6 +603,33 @@ test("withStreamRetry respects maxAttempts and surfaces the last failure", async
   assert.match(final.errorMessage, /attempt 3/);
 });
 
+test("withStreamRetry exhausts repeated factory network errors without hanging", async () => {
+  let calls = 0;
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      throw new Error(`network error (attempt ${calls})`);
+    },
+    {
+      maxAttempts: 3,
+      model: { api: "openai-responses", provider: "openai", id: "test-model" },
+    },
+  );
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 3);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["error"],
+  );
+  const final = await wrapped.result();
+  assert.equal(final.stopReason, "error");
+  assert.match(final.errorMessage, /attempt 3/);
+  assert.equal(final.api, "openai-responses");
+  assert.equal(final.provider, "openai");
+  assert.equal(final.model, "test-model");
+});
+
 test("withStreamRetry does not retry non-retryable errors", async () => {
   let calls = 0;
   const wrapped = withStreamRetry(
@@ -445,6 +664,33 @@ test("withStreamRetry backoff aborted before it can fire prevents any further at
   assert.equal(calls, 1);
   assert.equal(events[0].type, "error");
   assert.match(events[0].error.errorMessage, /503/);
+});
+
+test("withStreamRetry preserves a factory network error when backoff is aborted", async () => {
+  let calls = 0;
+  const controller = new AbortController();
+  controller.abort(new Error("cancelled"));
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      throw new Error("network error");
+    },
+    {
+      maxAttempts: 5,
+      signal: controller.signal,
+      model: { api: "openai-responses", provider: "openai", id: "test-model" },
+    },
+  );
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 1);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["error"],
+  );
+  const final = await wrapped.result();
+  assert.equal(final.stopReason, "error");
+  assert.equal(final.errorMessage, "network error");
 });
 
 test("withStreamRetry with disabled:true never retries", async () => {

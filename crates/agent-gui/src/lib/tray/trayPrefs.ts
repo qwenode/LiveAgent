@@ -1,7 +1,7 @@
 /**
  * 托盘本机偏好（桌面 GUI 专属，不进 settings 同步/网关）：
  * - showConversationTitles：托盘是否显示会话标题（投屏隐私；关闭后显示「对话 N」）
- * - showRunningBadge：macOS 状态栏是否显示运行中数量文字徽标
+ * - showRunningBadge：macOS 菜单栏是否显示运行数，并允许 Windows 任务栏显示未查看完成数
  *
  * 存 localStorage；与全局快捷键绑定（`lib/shortcuts/globalShortcuts.ts`）
  * 同属「设备偏好」类别。带订阅以便托盘同步 effect 在设置页改动后即时重推。

@@ -4,6 +4,7 @@ import test from "node:test";
 import { createTsModuleLoader } from "../helpers/load-ts-module.mjs";
 
 const STORAGE_KEY = "liveagent.globalShortcuts.v1";
+const FIXED_TOGGLE = { accelerator: "F2", enabled: true };
 
 function createMemoryLocalStorage(initial = {}) {
   const store = new Map(Object.entries(initial));
@@ -48,34 +49,37 @@ function loadGlobalShortcuts({ invoke } = {}) {
   return loader.loadModule("src/lib/shortcuts/globalShortcuts.ts");
 }
 
-test("readGlobalShortcutBindings returns empty bindings when storage is empty or corrupt", async () => {
+test("readGlobalShortcutBindings always provides the fixed F2 toggle", async () => {
   await withWindow(createMemoryLocalStorage(), async () => {
     const { readGlobalShortcutBindings } = loadGlobalShortcuts();
-    assert.deepEqual(readGlobalShortcutBindings(), {});
+    assert.deepEqual(readGlobalShortcutBindings(), { toggle: FIXED_TOGGLE });
   });
 
   await withWindow(createMemoryLocalStorage({ [STORAGE_KEY]: "not-json{" }), async () => {
     const { readGlobalShortcutBindings } = loadGlobalShortcuts();
-    assert.deepEqual(readGlobalShortcutBindings(), {});
+    assert.deepEqual(readGlobalShortcutBindings(), { toggle: FIXED_TOGGLE });
   });
 
   await withWindow(createMemoryLocalStorage({ [STORAGE_KEY]: JSON.stringify(42) }), async () => {
     const { readGlobalShortcutBindings } = loadGlobalShortcuts();
-    assert.deepEqual(readGlobalShortcutBindings(), {});
+    assert.deepEqual(readGlobalShortcutBindings(), { toggle: FIXED_TOGGLE });
   });
 });
 
-test("readGlobalShortcutBindings migrates legacy accelerator strings", async () => {
+test("readGlobalShortcutBindings drops legacy summon and overrides legacy toggle with F2", async () => {
   const storage = createMemoryLocalStorage({
     [STORAGE_KEY]: JSON.stringify({
       summon: " Ctrl+Shift+KeyA ",
-      toggle: "",
+      toggle: { accelerator: "Alt+KeyT", enabled: false },
+      newChat: " Ctrl+Shift+KeyN ",
+      pin: { accelerator: "f2", enabled: true },
     }),
   });
   await withWindow(storage, async () => {
     const { readGlobalShortcutBindings } = loadGlobalShortcuts();
     assert.deepEqual(readGlobalShortcutBindings(), {
-      summon: { accelerator: "Ctrl+Shift+KeyA", enabled: true },
+      toggle: FIXED_TOGGLE,
+      newChat: { accelerator: "Ctrl+Shift+KeyN", enabled: true },
     });
   });
 });
@@ -83,9 +87,8 @@ test("readGlobalShortcutBindings migrates legacy accelerator strings", async () 
 test("readGlobalShortcutBindings keeps enabled flags and drops invalid entries", async () => {
   const storage = createMemoryLocalStorage({
     [STORAGE_KEY]: JSON.stringify({
-      summon: { accelerator: "Ctrl+KeyA", enabled: false },
-      toggle: { accelerator: "Alt+KeyT" },
-      newChat: { accelerator: "   ", enabled: true },
+      toggle: { accelerator: "Alt+KeyT", enabled: false },
+      newChat: { accelerator: "Alt+KeyN" },
       pin: { accelerator: 42, enabled: true },
       unknownAction: { accelerator: "Ctrl+KeyU", enabled: true },
     }),
@@ -93,23 +96,30 @@ test("readGlobalShortcutBindings keeps enabled flags and drops invalid entries",
   await withWindow(storage, async () => {
     const { readGlobalShortcutBindings } = loadGlobalShortcuts();
     assert.deepEqual(readGlobalShortcutBindings(), {
-      summon: { accelerator: "Ctrl+KeyA", enabled: false },
+      toggle: FIXED_TOGGLE,
       // enabled 缺省视为启用（legacy 对象无该字段）。
-      toggle: { accelerator: "Alt+KeyT", enabled: true },
+      newChat: { accelerator: "Alt+KeyN", enabled: true },
     });
   });
 });
 
-test("writeGlobalShortcutBindings round-trips through readGlobalShortcutBindings", async () => {
+test("writeGlobalShortcutBindings persists the fixed F2 toggle", async () => {
   const storage = createMemoryLocalStorage();
   await withWindow(storage, async () => {
     const { readGlobalShortcutBindings, writeGlobalShortcutBindings } = loadGlobalShortcuts();
-    const bindings = {
-      summon: { accelerator: "Ctrl+Shift+KeyA", enabled: true },
+    writeGlobalShortcutBindings({
+      toggle: { accelerator: "Alt+KeyT", enabled: false },
+      newChat: { accelerator: "F2", enabled: true },
       pin: { accelerator: "F9", enabled: false },
-    };
-    writeGlobalShortcutBindings(bindings);
-    assert.deepEqual(readGlobalShortcutBindings(), bindings);
+    });
+    assert.deepEqual(readGlobalShortcutBindings(), {
+      toggle: FIXED_TOGGLE,
+      pin: { accelerator: "F9", enabled: false },
+    });
+    assert.deepEqual(JSON.parse(storage.dump()[STORAGE_KEY]), {
+      toggle: FIXED_TOGGLE,
+      pin: { accelerator: "F9", enabled: false },
+    });
   });
 });
 
@@ -118,21 +128,22 @@ test("applyGlobalShortcuts registers only enabled bindings with non-empty accele
   const { applyGlobalShortcuts } = loadGlobalShortcuts({
     invoke: async (command, args) => {
       calls.push({ command, args });
-      return [{ action: "summon", accelerator: "Ctrl+KeyA", error: "taken" }];
+      return [{ action: "toggle", accelerator: "F2", error: "taken" }];
     },
   });
   const failures = await applyGlobalShortcuts({
-    summon: { accelerator: "Ctrl+KeyA", enabled: true },
+    // 注册入口仍会覆盖调用方传入的旧值，确保固定 F2 不变量。
     toggle: { accelerator: "Alt+KeyT", enabled: false },
-    newChat: { accelerator: "   ", enabled: true },
+    newChat: { accelerator: "F2", enabled: true },
+    pin: { accelerator: "   ", enabled: true },
   });
   assert.deepEqual(calls, [
     {
       command: "app_set_global_shortcuts",
-      args: { bindings: [{ action: "summon", accelerator: "Ctrl+KeyA" }] },
+      args: { bindings: [{ action: "toggle", accelerator: "F2" }] },
     },
   ]);
-  assert.deepEqual(failures, [{ action: "summon", accelerator: "Ctrl+KeyA", error: "taken" }]);
+  assert.deepEqual(failures, [{ action: "toggle", accelerator: "F2", error: "taken" }]);
 });
 
 test("applyGlobalShortcuts tolerates non-Tauri environments and bad responses", async () => {
@@ -141,21 +152,32 @@ test("applyGlobalShortcuts tolerates non-Tauri environments and bad responses", 
       throw new Error("not tauri");
     },
   });
-  assert.deepEqual(
-    await applyWithThrow({ summon: { accelerator: "Ctrl+KeyA", enabled: true } }),
-    [],
-  );
+  assert.deepEqual(await applyWithThrow({ toggle: FIXED_TOGGLE }), []);
 
   const { applyGlobalShortcuts: applyWithBadResponse } = loadGlobalShortcuts({
     invoke: async () => null,
   });
-  assert.deepEqual(
-    await applyWithBadResponse({ summon: { accelerator: "Ctrl+KeyA", enabled: true } }),
-    [],
-  );
+  assert.deepEqual(await applyWithBadResponse({ toggle: FIXED_TOGGLE }), []);
 });
 
-test("applyStoredGlobalShortcuts skips the backend when nothing is bound", async () => {
+test("applyGlobalShortcuts keeps the fixed F2 binding even when callers pass no bindings", async () => {
+  const calls = [];
+  const { applyGlobalShortcuts } = loadGlobalShortcuts({
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return [];
+    },
+  });
+  await applyGlobalShortcuts({});
+  assert.deepEqual(calls, [
+    {
+      command: "app_set_global_shortcuts",
+      args: { bindings: [{ action: "toggle", accelerator: "F2" }] },
+    },
+  ]);
+});
+
+test("applyStoredGlobalShortcuts always registers the fixed global F2 toggle", async () => {
   const calls = [];
   await withWindow(createMemoryLocalStorage(), async () => {
     const { applyStoredGlobalShortcuts } = loadGlobalShortcuts({
@@ -166,15 +188,19 @@ test("applyStoredGlobalShortcuts skips the backend when nothing is bound", async
     });
     await applyStoredGlobalShortcuts();
   });
-  assert.deepEqual(calls, []);
+  assert.deepEqual(calls, [
+    {
+      command: "app_set_global_shortcuts",
+      args: { bindings: [{ action: "toggle", accelerator: "F2" }] },
+    },
+  ]);
 });
 
-test("applyStoredGlobalShortcuts still applies when every binding is disabled", async () => {
-  // 有绑定但全部停用时仍要走一次全量替换，把上次会话的注册清掉。
+test("applyStoredGlobalShortcuts keeps F2 when every configurable binding is disabled", async () => {
   const calls = [];
   const storage = createMemoryLocalStorage({
     [STORAGE_KEY]: JSON.stringify({
-      toggle: { accelerator: "Alt+KeyT", enabled: false },
+      newChat: { accelerator: "Alt+KeyN", enabled: false },
     }),
   });
   await withWindow(storage, async () => {
@@ -186,5 +212,10 @@ test("applyStoredGlobalShortcuts still applies when every binding is disabled", 
     });
     await applyStoredGlobalShortcuts();
   });
-  assert.deepEqual(calls, [{ command: "app_set_global_shortcuts", args: { bindings: [] } }]);
+  assert.deepEqual(calls, [
+    {
+      command: "app_set_global_shortcuts",
+      args: { bindings: [{ action: "toggle", accelerator: "F2" }] },
+    },
+  ]);
 });

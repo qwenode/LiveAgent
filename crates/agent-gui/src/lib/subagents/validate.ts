@@ -58,7 +58,7 @@ const KNOWN_AGENT_KEYS = new Set([
 ]);
 
 const MODES = new Set<SubagentMode>(["readonly", "worktree"]);
-const TASK_TYPES = new Set<SubagentTaskType>(["search", "synthesis"]);
+const BASE_TASK_TYPES = new Set<SubagentTaskType>(["search", "synthesis"]);
 const APPLY_POLICIES = new Set<SubagentApplyPolicy>(["none", "explicit", "auto"]);
 
 function parseOptionalBoolean(
@@ -140,6 +140,7 @@ export function parseSubagentBatch(
   options: {
     identities: Map<string, SubagentIdentity>;
     templates: SubagentTemplate[];
+    allowRoutineTaskType?: boolean;
   },
 ): ParseBatchResult {
   const issues: SubagentIssue[] = [];
@@ -222,13 +223,15 @@ export function parseSubagentBatch(
     let taskType: SubagentTaskType | undefined;
     if (typeof entry.task_type !== "undefined") {
       const rawTaskType = optionalString(entry.task_type);
-      if (!rawTaskType || !TASK_TYPES.has(rawTaskType as SubagentTaskType)) {
+      const isBaseTaskType =
+        Boolean(rawTaskType) && BASE_TASK_TYPES.has(rawTaskType as SubagentTaskType);
+      const isRoutineTaskType = rawTaskType === "routine" && options.allowRoutineTaskType === true;
+      if (!isBaseTaskType && !isRoutineTaskType) {
+        const allowedTypes = options.allowRoutineTaskType
+          ? '"search", "synthesis", or "routine"'
+          : '"search" or "synthesis"';
         issues.push(
-          issue(
-            "invalid_arguments",
-            'task_type must be "search" or "synthesis" when present.',
-            agentRef,
-          ),
+          issue("invalid_arguments", `task_type must be ${allowedTypes} when present.`, agentRef),
         );
       } else {
         taskType = rawTaskType as SubagentTaskType;

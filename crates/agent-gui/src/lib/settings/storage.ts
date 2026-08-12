@@ -18,6 +18,7 @@ import {
   normalizeSelectedModel,
   normalizeSettings,
   normalizeSkillsSettings,
+  normalizeSubagentMaxRounds,
   normalizeTheme,
   normalizeUpdateSettings,
   normalizeWorkspaceProjectPathKeys,
@@ -97,6 +98,8 @@ function readLocalUiSettings(): {
     return {
       conversationTitleModel: normalizeSelectedModel(obj.conversationTitleModel),
       subagentFastModel: normalizeSelectedModel(obj.subagentFastModel),
+      subagentProactiveDelegation: obj.subagentProactiveDelegation === true,
+      subagentMaxRounds: normalizeSubagentMaxRounds(obj.subagentMaxRounds),
       chatSidebar: {
         projectsCollapsed: chatSidebar.projectsCollapsed === true,
         recentCollapsed: chatSidebar.recentCollapsed === true,

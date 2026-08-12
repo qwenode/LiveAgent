@@ -1,7 +1,10 @@
 import type { MentionComposerDraft } from "@liveagent/ui/components/chat/MentionComposer";
 import type { MutableRefObject } from "react";
 import type { HistoryMessageRef } from "../../../lib/chat/conversation/conversationState";
-import type { PendingUploadedFile } from "../../../lib/chat/messages/uploadedFiles";
+import type {
+  PendingUploadedFile,
+  UploadedUserMessage,
+} from "../../../lib/chat/messages/uploadedFiles";
 import type { ChatRuntimeControls, ExecutionMode, ProviderId } from "../../../lib/settings";
 import type { ConversationRuntimeEntry } from "../runtime/chatPageRuntime";
 
@@ -28,7 +31,7 @@ export type GatewayChatRequestEvent = {
   executionMode?: string;
   workdir?: string;
   uploadedFiles?: PendingUploadedFile[];
-  queuePolicy?: "auto" | "append" | "interrupt" | string;
+  queuePolicy?: "auto" | "append" | "interrupt" | "steer" | string;
   skillPresetId?: string;
   skillsDisabled?: boolean;
 };
@@ -75,6 +78,7 @@ export type SendChatAction = (overrides?: {
   textOverride?: string;
   composerDraftOverride?: MentionComposerDraft;
   uploadedFilesOverride?: PendingUploadedFile[];
+  preparedUserMessageOverride?: UploadedUserMessage;
   conversationIdOverride?: string;
   executionModeOverride?: ExecutionMode;
   workdirOverride?: string;

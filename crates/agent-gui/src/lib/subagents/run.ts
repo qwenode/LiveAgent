@@ -29,6 +29,7 @@ import {
   buildSubagentContext,
   buildSubagentContinuationMessage,
   buildSubagentSystemPrompt,
+  SUBAGENT_ROUND_LIMIT_FINALIZE_PROMPT,
 } from "./prompts";
 import { createSubagentIdentity } from "./roster";
 import type { SubagentScheduler } from "./scheduler";
@@ -73,6 +74,7 @@ export type SubagentRunEnvironment = SubagentModelRuntime & {
   workdir: string;
   sessionId?: string;
   messageBusEnabled: boolean;
+  maxRounds: number;
   store: SubagentConversationStore;
   scheduler: SubagentScheduler;
   skillsPrompt?: string;
@@ -683,9 +685,30 @@ export async function executeSubagentRun(
       onToolResult: () => {
         publishProgress({ phase: "model" }, true);
       },
-      onBeforeNextTurn: async ({ emittedMessages }) => {
+      onBeforeNextTurn: async ({ round, emittedMessages }) => {
         const view = appendMessagesToConversation(baseState, emittedMessages);
         lastView = view;
+
+        // Reserve the configured final round for a tool-free completion report.
+        // This caps the whole run (investigation + report) at maxRounds instead
+        // of letting the limit add an extra, unbounded model turn.
+        if (round >= Math.max(1, env.maxRounds - 1)) {
+          const finalizeMessage = {
+            role: "user" as const,
+            content: [{ type: "text" as const, text: SUBAGENT_ROUND_LIMIT_FINALIZE_PROMPT }],
+            timestamp: Date.now(),
+          };
+          const finalizingState = appendMessagesToConversation(view, [finalizeMessage]);
+          lastView = finalizingState;
+          schedulePersist("running", finalizingState);
+          publishProgress({ phase: "responding" }, true);
+          return {
+            context: { ...buildRequestContext(finalizingState), tools: [] },
+            emittedMessages: [...emittedMessages, finalizeMessage],
+            disableTools: true,
+          };
+        }
+
         const busUpdateMessage = buildMessageBusUpdateMessage(await renderBusSnapshot());
         const appendBus = (context: ReturnType<typeof buildRequestContext>) =>
           busUpdateMessage

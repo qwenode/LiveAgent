@@ -5,7 +5,10 @@ import {
   ChangedFilesActionsProvider,
 } from "@liveagent/ui/components/chat/ChangedFilesCard";
 import { HistoryShareModal } from "@liveagent/ui/components/chat/HistoryShareModal";
-import type { MentionComposerHandle } from "@liveagent/ui/components/chat/MentionComposer";
+import type {
+  MentionComposerDraft,
+  MentionComposerHandle,
+} from "@liveagent/ui/components/chat/MentionComposer";
 import { NotifyToast } from "@liveagent/ui/components/chat/NotifyToast";
 import { SharedHistoryManagerModal } from "@liveagent/ui/components/chat/SharedHistoryManagerModal";
 import { TaskProgressBar } from "@liveagent/ui/components/chat/TaskProgressBar";
@@ -23,6 +26,7 @@ import { Button } from "@liveagent/ui/components/ui/button";
 import { useConfirmDialog } from "@liveagent/ui/components/ui/confirm-dialog";
 import { useLocale } from "@liveagent/ui/i18n/index";
 import { getAutomationState, useAutomation } from "@liveagent/ui/lib/automation/index";
+import { normalizeLogicalLineEndings } from "@liveagent/ui/lib/chat/composerText";
 import { openChatFileLink } from "@liveagent/ui/lib/chat/openChatFileLink";
 import { selectLatestTaskProgress } from "@liveagent/ui/lib/chat/taskProgress";
 import type { ScrollFollowHandle } from "@liveagent/ui/lib/chat-scroll/useScrollFollow";
@@ -35,6 +39,7 @@ import { conversationMatchesScope } from "@liveagent/ui/lib/sidebar/scope";
 import {
   selectConversations,
   selectRunningConversationIds,
+  selectUnseenRunResults,
 } from "@liveagent/ui/lib/sidebar/selectors";
 import { createSidebarStore } from "@liveagent/ui/lib/sidebar/store";
 import { useSidebarSelector } from "@liveagent/ui/lib/sidebar/useSidebarSelector";
@@ -65,9 +70,17 @@ import {
   type RenderTimelineItem,
 } from "../lib/chat/conversation/conversationState";
 import type { LiveTranscriptStore } from "../lib/chat/conversation/liveTranscriptStore";
-import type { ChatHistorySummary } from "../lib/chat/history/chatHistory";
+import {
+  archiveChatHistoryByCwd,
+  type ChatHistorySummary,
+  cleanupChatHistoryByCwd,
+} from "../lib/chat/history/chatHistory";
 import { memoryExtraction } from "../lib/chat/memory/extractionController";
 import type { CodeMentionReference } from "../lib/chat/messages/mentionReferences";
+import {
+  createUserMessageWithUploads,
+  mergePendingUploadedFiles,
+} from "../lib/chat/messages/uploadedFiles";
 import {
   buildFallbackConversationTitle,
   createConversationIdentity,
@@ -133,9 +146,13 @@ import {
   useLiveTranscriptController,
   usePendingUploads,
 } from "./chat";
-import { appendManagedSkillSelections } from "./chat/chatPageUtils";
+import { appendManagedSkillSelections, asErrorMessage } from "./chat/chatPageUtils";
 import { ChatFileDropOverlay } from "./chat/components/ChatFileDropOverlay";
 import { WorkspaceOverlayHost } from "./chat/components/WorkspaceOverlayHost";
+import {
+  buildTextFromComposerDraft,
+  importPastedTextsAsFiles,
+} from "./chat/composer/composerDraftText";
 import { useComposerDraftCache } from "./chat/composer/useComposerDraftCache";
 import { useGatewayBridgeReadiness } from "./chat/gateway/useGatewayBridgeReadiness";
 import { useGatewayRunMirrorCoordinator } from "./chat/gateway/useGatewayRunMirrorCoordinator";
@@ -263,6 +280,7 @@ export function ChatPage(props: ChatPageProps) {
   // workdirs, running set); ChatPage only issues imperative calls and keeps a
   // few narrow selector subscriptions.
   const sidebarStore = useMemo(() => createSidebarStore(createGuiSidebarBackend()), []);
+  const projectTaskMutationPathKeysRef = useRef(new Set<string>());
   useEffect(() => {
     sidebarStore.start();
     return () => {
@@ -500,6 +518,15 @@ export function ChatPage(props: ChatPageProps) {
     setConversationStopHandler,
     clearConversationStopHandler,
     requestActiveConversationStop,
+    setConversationAgentSteerHandler,
+    getConversationAgentSteerHandler,
+    clearConversationAgentSteerHandler,
+    deliverConversationAgentSteer,
+    reserveConversationDirectHandoff,
+    setConversationDirectHandoff,
+    takeConversationDirectHandoff,
+    clearConversationDirectHandoff,
+    directHandoffConversationIds,
     setConversationSendingState,
   } = useChatPageRuntimeStore({
     initialConversation: initialConversationRef.current,
@@ -523,6 +550,49 @@ export function ChatPage(props: ChatPageProps) {
     setCurrentConversationSelectedModel,
     setRunningConversationIds,
   });
+  const activeViewRef = useRef(activeView);
+  activeViewRef.current = activeView;
+  const isConversationActivelyViewed = useCallback(
+    (conversationId: string) => {
+      const targetConversationId = conversationId.trim();
+      return (
+        targetConversationId !== "" &&
+        activeViewRef.current === "chat" &&
+        currentConversationIdRef.current === targetConversationId &&
+        (typeof document === "undefined" ||
+          (document.visibilityState !== "hidden" && document.hasFocus()))
+      );
+    },
+    [currentConversationIdRef],
+  );
+  useEffect(() => {
+    const targetConversationId = currentConversationId.trim();
+    const clearCurrentRunResultIfViewed = () => {
+      if (
+        targetConversationId &&
+        activeView === "chat" &&
+        document.visibilityState !== "hidden" &&
+        document.hasFocus()
+      ) {
+        sidebarStore.clearRunResult(targetConversationId);
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "hidden") {
+        clearCurrentRunResultIfViewed();
+      }
+    };
+
+    clearCurrentRunResultIfViewed();
+    window.addEventListener("pageshow", clearCurrentRunResultIfViewed);
+    window.addEventListener("focus", clearCurrentRunResultIfViewed);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("pageshow", clearCurrentRunResultIfViewed);
+      window.removeEventListener("focus", clearCurrentRunResultIfViewed);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [activeView, currentConversationId, sidebarStore]);
   const handleLoadEarlierHistory = useCallback(
     () => loadEarlierHistoryActionRef.current(currentConversationIdRef.current),
     [currentConversationIdRef],
@@ -979,6 +1049,9 @@ export function ChatPage(props: ChatPageProps) {
     stopSending,
     stopConversation,
     enqueueCurrentComposerTurn,
+    requestNextTurnQueuedChatTurnDelivery,
+    confirmNextTurnQueuedChatTurnDelivery,
+    restoreNextTurnQueuedChatTurnDelivery,
     requestQueuedChatTurnProcessing,
     runQueuedTurnNow,
     moveQueuedTurnUp,
@@ -1010,6 +1083,9 @@ export function ChatPage(props: ChatPageProps) {
     setPendingUploadsForConversation,
     clearCachedComposerDraft,
     displayedConversationWorkdir,
+    setErrorMessage,
+    getConversationAgentSteerHandler,
+    deliverConversationAgentSteer,
     sendActionRef,
   });
 
@@ -1466,6 +1542,12 @@ export function ChatPage(props: ChatPageProps) {
     consumeConversationStop,
     setConversationStopHandler,
     clearConversationStopHandler,
+    setConversationAgentSteerHandler,
+    clearConversationAgentSteerHandler,
+    confirmNextTurnQueuedChatTurnDelivery,
+    restoreNextTurnQueuedChatTurnDelivery,
+    requestNextTurnQueuedChatTurnDelivery,
+    takeConversationDirectHandoff,
     setConversationSendingState,
     pendingUploadedFiles,
     getPendingUploadsForConversation,
@@ -1492,6 +1574,7 @@ export function ChatPage(props: ChatPageProps) {
     ensureTunnelToolTab,
     ensureSshTunnelToolTab,
     persistConversation,
+    isConversationActivelyViewed,
     replaceConversationAtMessage,
     pruneIdleConversationCaches,
     requestQueuedChatTurnProcessing,
@@ -1525,8 +1608,6 @@ export function ChatPage(props: ChatPageProps) {
   // （handleSelectConversation 定义之后）；这里先备好 ref 镜像。
   const handleNewConversationRef = useRef(handleNewConversation);
   handleNewConversationRef.current = handleNewConversation;
-  const activeViewRef = useRef(activeView);
-  activeViewRef.current = activeView;
   const isDraftConversationRef = useRef(isDraftConversation);
   isDraftConversationRef.current = isDraftConversation;
 
@@ -1536,11 +1617,12 @@ export function ChatPage(props: ChatPageProps) {
       if (!targetConversationId) {
         return;
       }
+      sidebarStore.clearRunResult(targetConversationId);
       prepareComposerForConversationChange();
       openController.open(targetConversationId);
       restoreCachedComposerDraft(targetConversationId);
     },
-    [openController],
+    [openController, sidebarStore],
   );
 
   const handleSelectProjectConversation = useCallback(
@@ -1569,6 +1651,7 @@ export function ChatPage(props: ChatPageProps) {
     sidebarStore,
     selectRunningConversationIds,
   );
+  const sidebarUnseenRunResults = useSidebarSelector(sidebarStore, selectUnseenRunResults);
   const appActionParamsRef = useRef({
     handleSelectConversation,
     handleSelectWorkspaceProject,
@@ -1737,6 +1820,7 @@ export function ChatPage(props: ChatPageProps) {
           theme: settings.theme,
           conversations: historyItems,
           runningConversationIds: sidebarRunningConversationIds,
+          unseenRunResultCount: sidebarUnseenRunResults.size,
           workspaceProjects,
           activeWorkspaceProjectId: activeWorkspaceProject?.id,
           archivedWorkspaceProjectPaths: settings.system.archivedWorkspaceProjectPaths,
@@ -1753,6 +1837,7 @@ export function ChatPage(props: ChatPageProps) {
     settings.theme,
     historyItems,
     sidebarRunningConversationIds,
+    sidebarUnseenRunResults,
     workspaceProjects,
     activeWorkspaceProject,
     settings.system.archivedWorkspaceProjectPaths,
@@ -1773,21 +1858,250 @@ export function ChatPage(props: ChatPageProps) {
     [removeSharedHistoryItems],
   );
 
+  const applyProjectTaskMutationResult = useCallback(
+    (conversationIds: readonly string[]) => {
+      const affectedIds = new Set(conversationIds.map((id) => id.trim()).filter(Boolean));
+      if (affectedIds.size === 0) {
+        return;
+      }
+      for (const conversationId of affectedIds) {
+        sidebarStore.removeLocal(conversationId);
+        cleanupDeletedConversationActionRef.current(conversationId);
+      }
+      removeSharedHistoryItems(affectedIds);
+      void sidebarStore.refreshWorkdirs("delete");
+    },
+    [removeSharedHistoryItems, sidebarStore],
+  );
+
+  const projectHasRunningTasks = useCallback(
+    (project: WorkspaceProject) => {
+      const pathKey = workspaceProjectPathKey(project.path);
+      if (!pathKey) {
+        return false;
+      }
+      const snapshot = sidebarStore.getSnapshot();
+      if (snapshot.runningWorkdirPathKeys.has(pathKey)) {
+        return true;
+      }
+      for (const conversation of snapshot.byId.values()) {
+        if (
+          workspaceProjectPathKey(conversation.cwd ?? "") === pathKey &&
+          (snapshot.runningConversationIds.has(conversation.id) ||
+            isConversationRunning(conversation.id))
+        ) {
+          return true;
+        }
+      }
+      return false;
+    },
+    [isConversationRunning, sidebarStore],
+  );
+
+  const handleArchiveProjectTasks = useCallback(
+    (project: WorkspaceProject) => {
+      const pathKey = workspaceProjectPathKey(project.path);
+      if (!pathKey || projectTaskMutationPathKeysRef.current.has(pathKey)) {
+        return;
+      }
+      if (projectHasRunningTasks(project)) {
+        setErrorMessage(t("chat.workspaceTaskMaintenanceRunning"));
+        return;
+      }
+      projectTaskMutationPathKeysRef.current.add(pathKey);
+      setErrorMessage(null);
+      void archiveChatHistoryByCwd(project.path)
+        .then((result) => applyProjectTaskMutationResult(result.conversationIds))
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          setErrorMessage(message || t("chat.workspaceArchiveTasksFailed"));
+        })
+        .finally(() => {
+          projectTaskMutationPathKeysRef.current.delete(pathKey);
+        });
+    },
+    [applyProjectTaskMutationResult, projectHasRunningTasks, t],
+  );
+
+  const handleCleanupProjectTasks = useCallback(
+    (project: WorkspaceProject) => {
+      const pathKey = workspaceProjectPathKey(project.path);
+      if (!pathKey || projectTaskMutationPathKeysRef.current.has(pathKey)) {
+        return;
+      }
+      if (projectHasRunningTasks(project)) {
+        setErrorMessage(t("chat.workspaceTaskMaintenanceRunning"));
+        return;
+      }
+      projectTaskMutationPathKeysRef.current.add(pathKey);
+      void (async () => {
+        try {
+          const confirmed = await requestConfirmDialog({
+            title: t("chat.workspaceCleanupTasksConfirm").replace("{name}", project.name),
+            description: t("chat.workspaceCleanupTasksDescription"),
+            confirmLabel: t("chat.workspaceCleanupTasks"),
+            cancelLabel: t("chat.cancel"),
+            closeLabel: t("chat.cancel"),
+            tone: "destructive",
+          });
+          if (!confirmed || projectHasRunningTasks(project)) {
+            if (confirmed) {
+              setErrorMessage(t("chat.workspaceTaskMaintenanceRunning"));
+            }
+            return;
+          }
+          setErrorMessage(null);
+          const result = await cleanupChatHistoryByCwd(project.path);
+          applyProjectTaskMutationResult(result.conversationIds);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setErrorMessage(message || t("chat.workspaceCleanupTasksFailed"));
+        } finally {
+          projectTaskMutationPathKeysRef.current.delete(pathKey);
+        }
+      })();
+    },
+    [applyProjectTaskMutationResult, projectHasRunningTasks, requestConfirmDialog, t],
+  );
+
+  const restoreDirectHandoffComposer = useCallback(
+    (conversationId: string, draft: MentionComposerDraft | null, uploads: typeof pendingUploadedFiles) => {
+      if (currentConversationIdRef.current === conversationId) {
+        if (draft && composerRef.current && !composerRef.current.hasContent()) {
+          composerRef.current.setDraft(draft);
+          composerRef.current.focus();
+        }
+      } else if (draft && !composerDraftCacheRef.current.has(conversationId)) {
+        composerDraftCacheRef.current.set(conversationId, draft);
+      }
+      if (
+        uploads.length > 0 &&
+        getPendingUploadsForConversation(conversationId).length === 0
+      ) {
+        setPendingUploadsForConversation(conversationId, uploads);
+      }
+    },
+    [getPendingUploadsForConversation, setPendingUploadsForConversation],
+  );
+
+  const startDirectHandoff = useCallback(
+    async (conversationId: string) => {
+      if (!reserveConversationDirectHandoff(conversationId)) return;
+      const draft = composerRef.current?.getDraft() ?? null;
+      let text = normalizeLogicalLineEndings(
+        draft
+          ? draft.largePastes.length > 0
+            ? draft.textWithoutLargePastes
+            : buildTextFromComposerDraft(draft)
+          : "",
+      );
+      let uploadedFiles = pendingUploadedFiles.slice();
+      if (!draft || (draft.isEmpty && uploadedFiles.length === 0)) {
+        clearConversationDirectHandoff(conversationId);
+        return;
+      }
+
+      if (draft.largePastes.length > 0) {
+        isImportingPastedTextRef.current = true;
+        setIsImportingPastedText(true);
+        try {
+          const imported = await importPastedTextsAsFiles(
+            displayedConversationWorkdir,
+            draft.largePastes,
+          );
+          text = buildTextFromComposerDraft(draft, imported.fileByPasteId);
+          uploadedFiles = mergePendingUploadedFiles(uploadedFiles, imported.files);
+        } catch (error) {
+          clearConversationDirectHandoff(conversationId);
+          setErrorMessage(asErrorMessage(error, "大段粘贴内容导入附件失败"));
+          return;
+        } finally {
+          isImportingPastedTextRef.current = false;
+          setIsImportingPastedText(false);
+        }
+      }
+
+      const userMessage = createUserMessageWithUploads(text, uploadedFiles, Date.now());
+      if (!userMessage) {
+        clearConversationDirectHandoff(conversationId);
+        return;
+      }
+      const stored = setConversationDirectHandoff(conversationId, {
+        text,
+        uploadedFiles,
+        userMessage,
+        executionMode: settings.system.executionMode,
+        workdir: displayedConversationWorkdir,
+        runtimeControls: settings.chatRuntimeControls,
+        restoreDraft: draft.isEmpty ? null : draft,
+        restoreUploadedFiles: pendingUploadedFiles.slice(),
+      });
+      if (!stored) {
+        clearConversationDirectHandoff(conversationId);
+        return;
+      }
+
+      resetVisibleTransientState(conversationId);
+      clearCachedComposerDraft(conversationId);
+      if (!stopConversation(conversationId)) {
+        const handoff = takeConversationDirectHandoff(conversationId);
+        if (handoff) {
+          restoreDirectHandoffComposer(
+            conversationId,
+            handoff.restoreDraft,
+            handoff.restoreUploadedFiles,
+          );
+        }
+        setErrorMessage("当前 Agent 无法停止，请重试。");
+      }
+    },
+    [
+      clearCachedComposerDraft,
+      clearConversationDirectHandoff,
+      displayedConversationWorkdir,
+      pendingUploadedFiles,
+      reserveConversationDirectHandoff,
+      resetVisibleTransientState,
+      restoreDirectHandoffComposer,
+      setConversationDirectHandoff,
+      settings.chatRuntimeControls,
+      settings.system.executionMode,
+      stopConversation,
+      takeConversationDirectHandoff,
+    ],
+  );
+
   const handleSend = useCallback(() => {
     const conversationId = currentConversationIdRef.current.trim();
     const runtimeEntry = conversationRuntimeCacheRef.current.get(conversationId);
     if (queuedChatTurnEditSlotRef.current?.conversationId === conversationId) {
-      if (enqueueCurrentComposerTurn("edit")) {
-        requestQueuedChatTurnProcessing(conversationId);
-      }
+      void enqueueCurrentComposerTurn("edit").then((queued) => {
+        if (queued) requestQueuedChatTurnProcessing(conversationId);
+      });
       return;
     }
     if (conversationId && (isConversationRunning(conversationId) || runtimeEntry?.isSending)) {
-      enqueueCurrentComposerTurn("end");
+      if (isAgentMode && settings.system.runningAgentSendMode === "interrupt") {
+        void startDirectHandoff(conversationId);
+        return;
+      }
+      void enqueueCurrentComposerTurn(
+        "end",
+        isAgentMode && settings.system.runningAgentSendMode === "steer"
+          ? "next-turn"
+          : "after-run",
+      );
       return;
     }
     void sendActionRef.current();
-  }, [enqueueCurrentComposerTurn, isConversationRunning]);
+  }, [
+    enqueueCurrentComposerTurn,
+    isAgentMode,
+    isConversationRunning,
+    requestQueuedChatTurnProcessing,
+    settings.system.runningAgentSendMode,
+    startDirectHandoff,
+  ]);
 
   const handleStopSending = useCallback(() => {
     stopSendingActionRef.current();
@@ -1907,6 +2221,8 @@ export function ChatPage(props: ChatPageProps) {
           onRemoveProject={handleRemoveWorkspaceProject}
           onArchiveProject={handleArchiveWorkspaceProject}
           onUnarchiveProject={handleUnarchiveWorkspaceProject}
+          onArchiveProjectTasks={handleArchiveProjectTasks}
+          onCleanupProjectTasks={handleCleanupProjectTasks}
           archivedProjectPathKeys={archivedWorkspaceProjectPathKeys}
           onNewConversation={() => {
             setActiveView("chat");
@@ -2092,6 +2408,8 @@ export function ChatPage(props: ChatPageProps) {
                   enabledSkills={enabledComposerSkills}
                   isAgentMode={isAgentMode}
                   executionMode={settings.system.executionMode}
+                  runningAgentSendMode={settings.system.runningAgentSendMode}
+                  isDirectHandoffPending={directHandoffConversationIds.has(currentConversationId)}
                   hasModels={hasModels}
                   currentModelLabel={currentModelLabel}
                   modelOptions={modelOptions}

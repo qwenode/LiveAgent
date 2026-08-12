@@ -91,7 +91,10 @@ import type { ActiveGatewayBridgeRequest } from "../gateway/gatewayBridgeTypes";
 import { createLocalGatewayChatRunId } from "../gateway/gatewayRuntimeStatusModel";
 import type { useGatewayRunMirrorCoordinator } from "../gateway/useGatewayRunMirrorCoordinator";
 import type { PersistConversationParams } from "../history/useConversationHistoryActions";
-import type { useChatPageRuntimeStore } from "../hooks/useChatPageRuntimeStore";
+import type {
+  ConversationDirectHandoff,
+  useChatPageRuntimeStore,
+} from "../hooks/useChatPageRuntimeStore";
 import type { useLiveTranscriptController } from "../hooks/useLiveTranscriptController";
 import type { createChatRuntimeHost } from "./ChatRuntimeHost";
 import {
@@ -161,6 +164,16 @@ type UseSendChatTurnParams = {
   consumeConversationStop: ChatPageRuntimeStore["consumeConversationStop"];
   setConversationStopHandler: ChatPageRuntimeStore["setConversationStopHandler"];
   clearConversationStopHandler: ChatPageRuntimeStore["clearConversationStopHandler"];
+  setConversationAgentSteerHandler: ChatPageRuntimeStore["setConversationAgentSteerHandler"];
+  clearConversationAgentSteerHandler: ChatPageRuntimeStore["clearConversationAgentSteerHandler"];
+  confirmNextTurnQueuedChatTurnDelivery: (
+    conversationId: string,
+    runToken: string,
+    messageIds: readonly string[],
+  ) => void;
+  restoreNextTurnQueuedChatTurnDelivery: (conversationId: string, runToken: string) => void;
+  requestNextTurnQueuedChatTurnDelivery: (conversationId: string) => void;
+  takeConversationDirectHandoff: ChatPageRuntimeStore["takeConversationDirectHandoff"];
   setConversationSendingState: ChatPageRuntimeStore["setConversationSendingState"];
   pendingUploadedFiles: PendingUploadedFile[];
   getPendingUploadsForConversation: (conversationId: string) => PendingUploadedFile[];
@@ -190,6 +203,7 @@ type UseSendChatTurnParams = {
   ensureTunnelToolTab: (projectPathKey?: string) => void;
   ensureSshTunnelToolTab: (projectPathKey?: string) => void;
   persistConversation: (params: PersistConversationParams) => Promise<boolean>;
+  isConversationActivelyViewed: (conversationId: string) => boolean;
   replaceConversationAtMessage: (
     conversationId: string,
     messageRef: HistoryMessageRef,
@@ -238,6 +252,12 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
     consumeConversationStop,
     setConversationStopHandler,
     clearConversationStopHandler,
+    setConversationAgentSteerHandler,
+    clearConversationAgentSteerHandler,
+    confirmNextTurnQueuedChatTurnDelivery,
+    restoreNextTurnQueuedChatTurnDelivery,
+    requestNextTurnQueuedChatTurnDelivery,
+    takeConversationDirectHandoff,
     setConversationSendingState,
     pendingUploadedFiles,
     getPendingUploadsForConversation,
@@ -264,6 +284,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
     ensureTunnelToolTab,
     ensureSshTunnelToolTab,
     persistConversation,
+    isConversationActivelyViewed,
     replaceConversationAtMessage,
     pruneIdleConversationCaches,
     requestQueuedChatTurnProcessing,
@@ -282,6 +303,56 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
     if (persistPromise) {
       await persistPromise.catch(() => false);
     }
+  }
+
+  function restoreDirectHandoffComposer(
+    conversationId: string,
+    handoff: ConversationDirectHandoff,
+  ) {
+    if (currentConversationIdRef.current === conversationId) {
+      if (handoff.restoreDraft && composerRef.current && !composerRef.current.hasContent()) {
+        composerRef.current.setDraft(handoff.restoreDraft);
+        composerRef.current.focus();
+      }
+    } else if (
+      handoff.restoreDraft &&
+      !composerDraftCacheRef.current.has(conversationId)
+    ) {
+      composerDraftCacheRef.current.set(conversationId, handoff.restoreDraft);
+    }
+    if (
+      handoff.restoreUploadedFiles.length > 0 &&
+      getPendingUploadsForConversation(conversationId).length === 0
+    ) {
+      setPendingUploadsForConversation(conversationId, handoff.restoreUploadedFiles);
+    }
+  }
+
+  function startDirectHandoffAfterFinalization(conversationId: string) {
+    const handoff = takeConversationDirectHandoff(conversationId);
+    if (!handoff) return;
+    void Promise.resolve().then(async () => {
+      try {
+        const accepted = await send({
+          textOverride: handoff.text,
+          uploadedFilesOverride: handoff.uploadedFiles,
+          preparedUserMessageOverride: handoff.userMessage,
+          conversationIdOverride: conversationId,
+          executionModeOverride: handoff.executionMode,
+          workdirOverride: handoff.workdir,
+          runtimeControlsOverride: handoff.runtimeControls,
+          preserveComposerOnStart: true,
+        });
+        if (accepted) return;
+        restoreDirectHandoffComposer(conversationId, handoff);
+      } catch (error) {
+        restoreDirectHandoffComposer(conversationId, handoff);
+        updateConversationRuntimeEntry(conversationId, (prev) => ({
+          ...prev,
+          errorMessage: asErrorMessage(error, "直接发送启动失败，请重试。"),
+        }));
+      }
+    });
   }
 
   const enableManagedSkills = useCallback(
@@ -303,6 +374,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
     textOverride?: string;
     composerDraftOverride?: MentionComposerDraft;
     uploadedFilesOverride?: PendingUploadedFile[];
+    preparedUserMessageOverride?: ReturnType<typeof createUserMessageWithUploads>;
     conversationIdOverride?: string;
     executionModeOverride?: ExecutionMode;
     workdirOverride?: string;
@@ -607,7 +679,9 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       return false;
     }
 
-    const userMessage = createUserMessageWithUploads(text, uploadedFiles, Date.now());
+    const userMessage =
+      overrides?.preparedUserMessageOverride ??
+      createUserMessageWithUploads(text, uploadedFiles, Date.now());
     if (!userMessage) {
       if (gatewayBridgeRequest) {
         const message = "Message is required.";
@@ -818,6 +892,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
         return;
       }
       conversationRunStarted = true;
+      sidebarStore.clearRunResult(conversationId);
       applyConversationState(nextConversationState);
       resetLiveTranscript(transcriptStore);
       setConversationAbortController(conversationId, cancellation.userStop);
@@ -937,6 +1012,22 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       if (result === "timed_out") {
         console.warn(`chat run finalization timed out: ${conversationId}`);
       }
+      const effectiveTerminalState = terminalHistoryPersistFailed ? "failed" : state;
+      const outcome =
+        effectiveTerminalState === "failed"
+          ? "failure"
+          : effectiveTerminalState === "cancelled"
+            ? "cancelled"
+            : "success";
+      sidebarStore.markRunResult({
+        conversationId,
+        outcome,
+        runId: gatewayBridgeRequestId,
+        workdir: conversationCwd,
+        // A failure is an actionable terminal state even when the conversation
+        // is currently visible; keep it in the sidebar so the title turns red.
+        seen: outcome === "failure" ? false : isConversationActivelyViewed(conversationId),
+      });
     }
 
     async function finishRequestedStopBeforeRuntime() {
@@ -955,6 +1046,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       clearConversationStopHandler(conversationId, handleConversationStop);
       consumeConversationStop(conversationId, runStopRequestVersion);
       pruneIdleConversationCaches([conversationId]);
+      startDirectHandoffAfterFinalization(conversationId);
       return true;
     }
 
@@ -1520,6 +1612,8 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
             model,
             runtime: providerConfig,
             subagentFastRuntime,
+            proactiveDelegation: settings.customSettings.subagentProactiveDelegation === true,
+            subagentMaxRounds: settings.customSettings.subagentMaxRounds,
             failover: failoverParams,
             runtimeModel,
             selectedModel,
@@ -1569,6 +1663,21 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
             sessionId,
             taskStateStore,
             conversationId,
+            activeSteer: {
+              conversationId,
+              runToken: gatewayBridgeRequestId,
+              register: setConversationAgentSteerHandler,
+              clear: clearConversationAgentSteerHandler,
+              onDeliveryAvailable: requestNextTurnQueuedChatTurnDelivery,
+              onDeliveryClosed: restoreNextTurnQueuedChatTurnDelivery,
+            },
+            onConfirmedSteerMessages: (messageIds) => {
+              confirmNextTurnQueuedChatTurnDelivery(
+                conversationId,
+                gatewayBridgeRequestId,
+                messageIds,
+              );
+            },
             conversationCwd,
             fallbackTitle,
             createdAt,
@@ -1592,6 +1701,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
               persistableAgentProgress = progress;
             },
             commitVisibleAbortedConversation,
+            persistConversationMidRun: persistConversationWithHistorySync,
             persistConversationWithHistorySync: persistTerminalConversation,
             freezeGatewayFinalProjection,
           },
@@ -1686,6 +1796,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
         if (runStopRequestVersion !== null) {
           consumeConversationStop(conversationId, runStopRequestVersion);
         }
+        startDirectHandoffAfterFinalization(conversationId);
       } else {
         requestQueuedChatTurnProcessing(conversationId);
       }

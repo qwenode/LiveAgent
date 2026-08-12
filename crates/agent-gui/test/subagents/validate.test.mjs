@@ -33,6 +33,7 @@ function parse(args, options = {}) {
   return validate.parseSubagentBatch(args, {
     identities: options.identities ?? new Map(),
     templates: options.templates ?? TEMPLATES,
+    allowRoutineTaskType: options.allowRoutineTaskType,
   });
 }
 
@@ -56,7 +57,7 @@ test("minimal valid agent gets mechanical defaults", () => {
   assert.equal(result.batch.concurrency, 1);
 });
 
-test("task_type is optional, trimmed, and limited to search or synthesis", () => {
+test("task_type keeps legacy routing by default and gates routine behind proactive delegation", () => {
   const valid = parse({
     agents: [
       { id: "searcher", prompt: "find it", task_type: " search " },
@@ -70,10 +71,29 @@ test("task_type is optional, trimmed, and limited to search or synthesis", () =>
     ["search", "synthesis", undefined],
   );
 
+  const routineDisabled = parse({
+    agents: [{ id: "builder", prompt: "implement it", task_type: "routine" }],
+  });
+  assert.deepEqual(issueCodes(routineDisabled), ["invalid_arguments"]);
+  assert.match(routineDisabled.issues[0].message, /task_type must be "search" or "synthesis"/);
+
+  const routineEnabled = parse(
+    { agents: [{ id: "builder", prompt: "implement it", task_type: " routine " }] },
+    { allowRoutineTaskType: true },
+  );
+  assert.equal(routineEnabled.ok, true);
+  assert.equal(routineEnabled.batch.agents[0].spec.taskType, "routine");
+
   for (const taskType of [null, "", "review", 42]) {
-    const invalid = parse({ agents: [{ id: "a", prompt: "go", task_type: taskType }] });
+    const invalid = parse(
+      { agents: [{ id: "a", prompt: "go", task_type: taskType }] },
+      { allowRoutineTaskType: true },
+    );
     assert.deepEqual(issueCodes(invalid), ["invalid_arguments"]);
-    assert.match(invalid.issues[0].message, /task_type must be "search" or "synthesis"/);
+    assert.match(
+      invalid.issues[0].message,
+      /task_type must be "search", "synthesis", or "routine"/,
+    );
   }
 });
 

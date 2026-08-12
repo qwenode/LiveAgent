@@ -126,6 +126,36 @@ test("edited queued chat turns keep their scoped priority when anchors disappear
   );
 });
 
+test("next-turn queue helpers keep FIFO delivery separate from after-run turns", () => {
+  const first = queue.createQueuedChatTurn({
+    ...turn("next-1", "conversation-a", "steer one"),
+    delivery: "next-turn",
+    userMessage: { role: "user", id: "message-1", content: "steer one", timestamp: 1 },
+  });
+  const second = queue.createQueuedChatTurn({
+    ...turn("after-1", "conversation-a", "after run"),
+    delivery: "after-run",
+  });
+  const third = queue.createQueuedChatTurn({
+    ...turn("next-2", "conversation-a", "steer two"),
+    delivery: "next-turn",
+    userMessage: { role: "user", id: "message-2", content: "steer two", timestamp: 2 },
+  });
+  const waiting = [first, second, third];
+
+  assert.equal(queue.findNextWaitingNextTurnQueuedChatTurn(waiting, "conversation-a").id, "next-1");
+  assert.equal(queue.takeNextAfterRunQueuedChatTurn(waiting, "conversation-a").item.id, "after-1");
+  assert.equal(queue.isQueuedChatTurnMutable(first), true);
+
+  const delivering = queue.updateQueuedChatTurn(waiting, "next-1", {
+    status: "delivering",
+    targetRunToken: "run-1",
+  });
+  assert.equal(queue.isQueuedChatTurnDelivering(delivering[0]), true);
+  assert.equal(queue.isQueuedChatTurnMutable(delivering[0]), false);
+  assert.equal(queue.findNextWaitingNextTurnQueuedChatTurn(delivering, "conversation-a").id, "next-2");
+});
+
 test("queued chat turn preview keeps structured draft hints compact", () => {
   const richDraft = draft("hello long paste", [
     { type: "text", text: "hello " },

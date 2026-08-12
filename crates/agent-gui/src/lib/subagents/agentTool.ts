@@ -52,95 +52,104 @@ import { parseSubagentBatch, type ResolvedSubagentSpec } from "./validate";
 
 const DEFAULT_SUBAGENT_STALL_WARNING_MS = 45_000;
 
-const AGENT_PARAMETERS = Type.Object(
-  {
-    agents: Type.Array(
-      Type.Object(
+function buildAgentParameters(proactiveDelegation: boolean) {
+  const taskTypeSchema = proactiveDelegation
+    ? Type.Union([Type.Literal("search"), Type.Literal("synthesis"), Type.Literal("routine")], {
+        description:
+          "Optional per-job routing hint. search is for focused lookup or exploration; synthesis is for combining or summarizing findings; routine is for bounded day-to-day implementation, tests, refactoring, or fixes. These use the configured Fast model when available. Omit for architecture, risky or high-stakes decisions, and context-heavy reasoning. This field is not inherited when an agent is resumed.",
+      })
+    : Type.Union([Type.Literal("search"), Type.Literal("synthesis")], {
+        description:
+          "Optional per-job lightweight routing hint. search is for focused lookup or exploration; synthesis is for combining or summarizing existing findings. These use the configured Fast model when available. Omit for implementation, architecture, risky actions, or context-heavy reasoning. This field is not inherited when an agent is resumed.",
+      });
+
+  return Type.Object(
+    {
+      agents: Type.Array(
+        Type.Object(
+          {
+            id: Type.String({
+              minLength: 1,
+              maxLength: 64,
+              description:
+                "Stable agent id (letters, digits, dots, dashes, underscores). Reuse the same id to resume that agent.",
+            }),
+            prompt: Type.String({
+              minLength: 1,
+              description:
+                "Task for this run. For an existing id this is normally the only field needed besides id.",
+            }),
+            task_type: Type.Optional(taskTypeSchema),
+            name: Type.Optional(
+              Type.String({
+                description: "Display name. Only valid when the id is first created.",
+              }),
+            ),
+            role: Type.Optional(
+              Type.String({ description: "Short role. Only valid when the id is first created." }),
+            ),
+            identity: Type.Optional(
+              Type.String({
+                description:
+                  "Long-lived persona/identity instructions. Only valid when the id is first created.",
+              }),
+            ),
+            template: Type.Optional(
+              Type.String({
+                description:
+                  "Enabled AGENTS template id or name. Only valid when the id is first created.",
+              }),
+            ),
+            mode: Type.Optional(
+              Type.Union([Type.Literal("readonly"), Type.Literal("worktree")], {
+                description:
+                  "readonly = inspect-only tools; worktree = file+shell tools in an isolated git worktree. Defaults: new agent readonly, resumed agent keeps its last mode.",
+              }),
+            ),
+            apply_policy: Type.Optional(
+              Type.Union([Type.Literal("none"), Type.Literal("explicit"), Type.Literal("auto")], {
+                description:
+                  "Worktree merge-back policy. none (default) never applies; auto applies the patch; explicit applies only files matching allowed_output_paths.",
+              }),
+            ),
+            allowed_output_paths: Type.Optional(
+              Type.Array(Type.String(), {
+                description:
+                  "Workspace-relative files/directories (globs allowed) permitted to merge back. Required with apply_policy=explicit.",
+              }),
+            ),
+            resume: Type.Optional(
+              Type.Boolean({
+                description:
+                  "Defaults to true. Set false to start a fresh private context for the same stable id.",
+              }),
+            ),
+            retain_worktree: Type.Optional(
+              Type.Boolean({
+                description:
+                  "Keep the worktree after a successful run even when it could be cleaned up safely.",
+              }),
+            ),
+          },
+          { additionalProperties: false },
+        ),
         {
-          id: Type.String({
-            minLength: 1,
-            maxLength: 64,
-            description:
-              "Stable agent id (letters, digits, dots, dashes, underscores). Reuse the same id to resume that agent.",
-          }),
-          prompt: Type.String({
-            minLength: 1,
-            description:
-              "Task for this run. For an existing id this is normally the only field needed besides id.",
-          }),
-          task_type: Type.Optional(
-            Type.Union([Type.Literal("search"), Type.Literal("synthesis")], {
-              description:
-                "Optional per-job lightweight routing hint. search is for focused lookup or exploration; synthesis is for combining or summarizing existing findings. These use the configured Fast model when available. Omit for implementation, architecture, risky actions, or context-heavy reasoning. This field is not inherited when an agent is resumed.",
-            }),
-          ),
-          name: Type.Optional(
-            Type.String({ description: "Display name. Only valid when the id is first created." }),
-          ),
-          role: Type.Optional(
-            Type.String({ description: "Short role. Only valid when the id is first created." }),
-          ),
-          identity: Type.Optional(
-            Type.String({
-              description:
-                "Long-lived persona/identity instructions. Only valid when the id is first created.",
-            }),
-          ),
-          template: Type.Optional(
-            Type.String({
-              description:
-                "Enabled AGENTS template id or name. Only valid when the id is first created.",
-            }),
-          ),
-          mode: Type.Optional(
-            Type.Union([Type.Literal("readonly"), Type.Literal("worktree")], {
-              description:
-                "readonly = inspect-only tools; worktree = file+shell tools in an isolated git worktree. Defaults: new agent readonly, resumed agent keeps its last mode.",
-            }),
-          ),
-          apply_policy: Type.Optional(
-            Type.Union([Type.Literal("none"), Type.Literal("explicit"), Type.Literal("auto")], {
-              description:
-                "Worktree merge-back policy. none (default) never applies; auto applies the patch; explicit applies only files matching allowed_output_paths.",
-            }),
-          ),
-          allowed_output_paths: Type.Optional(
-            Type.Array(Type.String(), {
-              description:
-                "Workspace-relative files/directories (globs allowed) permitted to merge back. Required with apply_policy=explicit.",
-            }),
-          ),
-          resume: Type.Optional(
-            Type.Boolean({
-              description:
-                "Defaults to true. Set false to start a fresh private context for the same stable id.",
-            }),
-          ),
-          retain_worktree: Type.Optional(
-            Type.Boolean({
-              description:
-                "Keep the worktree after a successful run even when it could be cleaned up safely.",
-            }),
-          ),
+          minItems: 1,
+          maxItems: MAX_AGENTS,
+          description: "One entry per delegated job. Independent entries run in parallel.",
         },
-        { additionalProperties: false },
       ),
-      {
-        minItems: 1,
-        maxItems: MAX_AGENTS,
-        description: "One entry per delegated job. Independent entries run in parallel.",
-      },
-    ),
-    concurrency: Type.Optional(
-      Type.Integer({
-        minimum: 1,
-        maximum: MAX_AGENTS,
-        description: `Maximum agents running concurrently. Defaults to ${MAX_AGENTS}.`,
-      }),
-    ),
-  },
-  { additionalProperties: false },
-);
+      concurrency: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          maximum: MAX_AGENTS,
+          description: `Maximum agents running concurrently. Defaults to ${MAX_AGENTS}.`,
+        }),
+      ),
+    },
+    { additionalProperties: false },
+  );
+}
 
 async function resolveOutputPaths(params: {
   agents: ResolvedSubagentSpec[];
@@ -204,6 +213,8 @@ export type SubagentModelRuntime = {
 export type SubagentRuntimeConfig = SubagentModelRuntime & {
   getParentRuntime?: () => SubagentModelRuntime;
   fastRuntime?: SubagentModelRuntime;
+  proactiveDelegation?: boolean;
+  maxRounds: number;
   sessionId?: string;
   templates: SubagentTemplate[];
   store: SubagentConversationStore;
@@ -219,6 +230,8 @@ export function createSubagentTools(params: {
   runtime: ProviderRuntimeConfig;
   getParentRuntime?: () => SubagentModelRuntime;
   fastRuntime?: SubagentModelRuntime;
+  proactiveDelegation?: boolean;
+  maxRounds: number;
   runtimePlatform?: RuntimePlatform;
   workdir: string;
   resolveHomeDir?: () => Promise<string>;
@@ -263,16 +276,26 @@ export function createSubagentTools(params: {
   const rosterEntries = buildRosterEntries(store.listIdentities(), store.latestRunsByAgent());
   const templateEntries = buildTemplateEntries(templates);
 
+  const proactiveDelegation = params.proactiveDelegation === true;
+  const taskTypeDescription = proactiveDelegation
+    ? [
+        "Set task_type=search for focused lookup, code navigation, documentation/log investigation, or simple verification. Set task_type=synthesis for summarizing, comparing, or organizing findings already available to the subagent. Set task_type=routine for bounded day-to-day implementation, tests, refactoring, or fixes. These jobs use the configured Fast model when available.",
+        "Omit task_type for architecture, risky or high-stakes decisions, and work that needs deep continuity with the parent context. task_type is per run and must be specified again on resume; when omitted or when the Fast model is unavailable, the subagent uses the current chat model.",
+      ]
+    : [
+        "Set task_type=search for focused lookup, code navigation, documentation/log investigation, or simple verification. Set task_type=synthesis for summarizing, comparing, or organizing findings already available to the subagent. These jobs use the configured Fast model when available.",
+        "Omit task_type for implementation, architecture, risky or high-stakes decisions, and work that needs deep continuity with the parent context. task_type is per run and must be specified again on resume; when omitted or when the Fast model is unavailable, the subagent uses the current chat model.",
+      ];
+
   const toolAgent: Tool = {
     name: AGENT_TOOL_NAME,
     description: [
       "Delegate one or more independent jobs to persistent, isolated subagents and return their final reports.",
       "Pass one entry per job in `agents`; independent entries run in parallel up to `concurrency`. Use sequential Agent calls only when a later job needs an earlier job's output.",
       "Each agent has a stable `id` inside this conversation. Reuse the same id to resume that agent's private context; use a new id only for a genuinely new persona.",
-      "Creation fields (name, role, identity, template) apply only when an id is first created; sending different values for an existing id is an error. For an existing id, send only id and the new prompt.",
+      "Creation fields (name, role, identity, template) apply only when an id is first created; sending different values for an existing id is an error. For an existing id, send id and the new prompt, plus mode only when the follow-up needs different access.",
       "mode=readonly (default for new agents) gives inspect-only tools — use it for research, review, and discussion. mode=worktree gives file+shell tools inside an isolated git worktree — use it only when file changes are expected or explicitly requested. A resumed agent keeps its previous mode unless you set mode.",
-      "Set task_type=search for focused lookup, code navigation, documentation/log investigation, or simple verification. Set task_type=synthesis for summarizing, comparing, or organizing findings already available to the subagent. These jobs use the configured Fast model when available.",
-      "Omit task_type for implementation, architecture, risky or high-stakes decisions, and work that needs deep continuity with the parent context. task_type is per run and must be specified again on resume; when omitted or when the Fast model is unavailable, the subagent uses the current chat model.",
+      ...taskTypeDescription,
       "apply_policy controls merge-back from a worktree: none (default) never applies, auto applies the patch automatically, explicit applies only when every changed file matches allowed_output_paths.",
       "retain_worktree=true keeps a safely-cleanable worktree for review. Worktrees with unapplied changes or failed agents are always retained.",
       "Subagents cannot call Agent recursively. Worktree mode must not modify global LiveAgent settings, MCP server configuration, cron tasks, or user-level skills.",
@@ -284,7 +307,7 @@ export function createSubagentTools(params: {
       "Enabled AGENTS templates (reference by template=<id>):",
       formatTemplates(templateEntries),
     ].join("\n"),
-    parameters: AGENT_PARAMETERS,
+    parameters: buildAgentParameters(proactiveDelegation),
   };
 
   async function executeAgentToolCall(
@@ -321,7 +344,11 @@ export function createSubagentTools(params: {
     const identities = new Map(
       store.listIdentities().map((identity) => [identity.agentId, identity]),
     );
-    const parsed = parseSubagentBatch(toolCall.arguments, { identities, templates });
+    const parsed = parseSubagentBatch(toolCall.arguments, {
+      identities,
+      templates,
+      allowRoutineTaskType: params.proactiveDelegation === true,
+    });
     if (!parsed.ok) {
       return rejectBatch(parsed.issues);
     }
@@ -351,6 +378,7 @@ export function createSubagentTools(params: {
       workdir: params.workdir,
       sessionId: params.sessionId,
       messageBusEnabled,
+      maxRounds: params.maxRounds,
       store,
       scheduler,
       skillsPrompt: params.skillsPrompt,
@@ -391,7 +419,9 @@ export function createSubagentTools(params: {
           now: Date.now(),
         });
       const shouldUseFastRuntime =
-        resolved.spec.taskType === "search" || resolved.spec.taskType === "synthesis";
+        resolved.spec.taskType === "search" ||
+        resolved.spec.taskType === "synthesis" ||
+        (params.proactiveDelegation === true && resolved.spec.taskType === "routine");
       const fastRuntime = shouldUseFastRuntime ? params.fastRuntime : undefined;
       const fastMatchesParent =
         !fastRuntime ||

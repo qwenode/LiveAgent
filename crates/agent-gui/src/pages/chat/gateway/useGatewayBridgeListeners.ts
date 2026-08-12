@@ -22,7 +22,7 @@ type UseGatewayBridgeListenersParams = GatewayBridgeRuntimeRefs & {
   ) => Promise<void> | void;
   shouldQueueGatewayChatRequest: (
     conversationId: string,
-    queuePolicy: "auto" | "append" | "interrupt",
+    queuePolicy: "auto" | "append" | "interrupt" | "steer",
   ) => boolean;
   enqueueGatewayChatRequest: (
     claimed: GatewayChatClaimedRequest,
@@ -83,12 +83,16 @@ function isConversationAlreadyRunningError(message: string) {
   return message.trim().startsWith("Conversation is already running:");
 }
 
-function normalizeQueuePolicy(value: string | null | undefined): "auto" | "append" | "interrupt" {
+function normalizeQueuePolicy(
+  value: string | null | undefined,
+): "auto" | "append" | "interrupt" | "steer" {
   switch (value?.trim()) {
     case "append":
       return "append";
     case "interrupt":
       return "interrupt";
+    case "steer":
+      return "steer";
     default:
       return "auto";
   }

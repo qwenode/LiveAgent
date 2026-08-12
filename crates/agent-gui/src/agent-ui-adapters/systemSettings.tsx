@@ -25,7 +25,10 @@ export function SystemSettingsExtensions(props: SettingsSectionProps) {
   const { settings, setSettings } = props;
   const { t } = useLocale();
   const trayPrefs = useTrayPrefs();
-  const isMacPlatform = useMemo(() => inferRuntimePlatform() === "macos", []);
+  const supportsTaskBadge = useMemo(() => {
+    const platform = inferRuntimePlatform();
+    return platform === "macos" || platform === "windows";
+  }, []);
 
   return (
     <>
@@ -79,7 +82,7 @@ export function SystemSettingsExtensions(props: SettingsSectionProps) {
             />
           }
         />
-        {isMacPlatform ? (
+        {supportsTaskBadge ? (
           <SettingsRow
             title={t("settings.trayRunningBadge")}
             description={t("settings.trayRunningBadgeDesc")}

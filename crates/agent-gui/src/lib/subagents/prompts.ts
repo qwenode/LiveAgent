@@ -12,6 +12,13 @@ function currentTaskTypeLine(spec: SubagentSpec) {
   return `Current task type: ${spec.taskType ?? "unclassified (task_type omitted)"}. This classification applies only to the current run.`;
 }
 
+export const SUBAGENT_ROUND_LIMIT_FINALIZE_PROMPT = [
+  "You have reached the delegated execution round limit.",
+  "Stop investigating immediately. Do not call any tools and do not expand the task scope. Use only the evidence already present in the conversation to produce the final report now.",
+  "Include: (1) confirmed conclusions, (2) concrete evidence such as file paths, symbols, line numbers, observations, or completed changes, (3) unresolved or unverified items, and (4) the best current answer to the delegated task.",
+  'Mark anything unsupported by direct evidence as "unconfirmed". Do not delay the report to pursue completeness.',
+].join("\n");
+
 export function buildSubagentSystemPrompt(params: {
   spec: SubagentSpec;
   identity: SubagentIdentity;

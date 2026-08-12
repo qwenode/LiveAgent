@@ -1156,7 +1156,7 @@ test("subagent placeholders are built from complete structured agents before res
           id: "b",
           name: "狼人玩家 2",
           prompt: "你是玩家 2，请继续发言。",
-          task_type: "synthesis",
+          task_type: "routine",
         },
       ],
       concurrency: 2,
@@ -1187,7 +1187,7 @@ test("subagent placeholders are built from complete structured agents before res
   );
   assert.deepEqual(
     placeholders.map((item) => item.arguments.task_type),
-    ["search", "synthesis"],
+    ["search", "routine"],
   );
   assert.deepEqual(
     placeholders.map((item) => item.arguments.phase),

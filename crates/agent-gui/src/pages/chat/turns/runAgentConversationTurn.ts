@@ -17,6 +17,7 @@ import {
   appendMessagesToConversation,
   appendRenderOnlyMessagesToConversation,
   type ConversationViewState,
+  findHistoryMessageRefByMessageId,
 } from "../../../lib/chat/conversation/conversationState";
 import type {
   LiveTranscriptStore,
@@ -35,6 +36,11 @@ import type {
 } from "../../../lib/chat/memory/extractionEngine";
 import type { HostedSearchBlock } from "../../../lib/chat/messages/hostedSearch";
 import {
+  getUserMessageAttachments,
+  getUserMessageDisplayText,
+  type UploadedUserMessage,
+} from "../../../lib/chat/messages/uploadedFiles";
+import {
   appendTextDeltaToRound,
   appendThinkingDeltaToRound,
   attachToolResultToRound,
@@ -46,6 +52,7 @@ import {
   upsertToolCallToRound,
 } from "../../../lib/chat/messages/uiMessages";
 import {
+  type AgentRunnerActiveSteer,
   type AgentRunnerFailoverParams,
   type AgentRunnerFailoverSwitchEvent,
   runAssistantWithTools,
@@ -98,6 +105,10 @@ export type PersistConversationParams = {
   sessionId: string;
   providerId: string;
   model: string;
+  selectedModel?: {
+    customProviderId: string;
+    model: string;
+  };
   cwd?: string;
   state: ConversationViewState;
   fallbackTitle: string;
@@ -212,6 +223,8 @@ export type RunAgentConversationTurnParams = {
   model: string;
   runtime: ProviderRuntimeConfig;
   subagentFastRuntime?: SubagentModelRuntime;
+  proactiveDelegation?: boolean;
+  subagentMaxRounds: number;
   failover?: AgentRunnerFailoverParams;
   runtimeModel: RuntimeModel;
   selectedModel: {
@@ -245,6 +258,8 @@ export type RunAgentConversationTurnParams = {
   /** Run 级任务状态存储：由 send 管线构建，提交走非终态持久化。 */
   taskStateStore: TaskStateStore;
   conversationId: string;
+  activeSteer?: Omit<AgentRunnerActiveSteer, "onMessagesEnteredContext">;
+  onConfirmedSteerMessages?: (messageIds: readonly string[]) => void;
   conversationCwd?: string;
   fallbackTitle: string;
   createdAt: number;
@@ -277,6 +292,7 @@ export type RunAgentConversationTurnParams = {
   }) => void;
   commitVisibleAbortedConversation: () => boolean;
   freezeGatewayFinalProjection: (state: ConversationViewState, contentComplete?: boolean) => void;
+  persistConversationMidRun: (params: PersistConversationParams) => Promise<boolean>;
   persistConversationWithHistorySync: (params: PersistConversationParams) => Promise<boolean>;
   memoryExtractionModel?: MemoryExtractionModelConfig;
   onMemoryExtractionModelFailure?: (model: MemoryExtractionModelConfig) => void;
@@ -289,6 +305,8 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     model,
     runtime,
     subagentFastRuntime,
+    proactiveDelegation,
+    subagentMaxRounds,
     runtimeModel,
     selectedModel,
     effectiveWorkdir,
@@ -312,6 +330,8 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     sessionId,
     taskStateStore,
     conversationId,
+    activeSteer,
+    onConfirmedSteerMessages,
     conversationCwd,
     fallbackTitle,
     createdAt,
@@ -334,6 +354,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     updatePersistableAgentProgress,
     commitVisibleAbortedConversation,
     freezeGatewayFinalProjection,
+    persistConversationMidRun,
     persistConversationWithHistorySync,
     memoryExtractionModel,
     onMemoryExtractionModelFailure,
@@ -370,6 +391,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
       subagentReminder = buildRosterReminder({
         identities: subagentStore.listIdentities(),
         latestRunsByAgent: subagentStore.latestRunsByAgent(),
+        proactiveDelegation,
       });
     } catch (error) {
       console.warn("Failed to load the subagent roster", error);
@@ -480,6 +502,8 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
           runtime,
           getParentRuntime: () => activeParentRuntime,
           fastRuntime: subagentFastRuntime,
+          proactiveDelegation,
+          maxRounds: subagentMaxRounds,
           sessionId,
           templates: enabledSubagentTemplates(agentTemplates),
           store: subagentStore,
@@ -648,6 +672,33 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     });
   }
 
+  function readMessageId(message: Message) {
+    const id = (message as Message & { id?: unknown }).id;
+    return typeof id === "string" && id.trim() ? id.trim() : null;
+  }
+
+  function filterAlreadyCommittedMessages(messages: Message[]) {
+    const committedIds = new Set<string>();
+    const committedToolResultIds = new Set<string>();
+    for (const segment of getNextConversationState().segments) {
+      for (const message of segment.messages) {
+        const messageId = readMessageId(message);
+        if (messageId) committedIds.add(messageId);
+        if (message.role === "toolResult" && message.toolCallId.trim()) {
+          committedToolResultIds.add(message.toolCallId.trim());
+        }
+      }
+    }
+    return messages.filter((message) => {
+      const messageId = readMessageId(message);
+      if (messageId && committedIds.has(messageId)) return false;
+      if (message.role === "toolResult" && committedToolResultIds.has(message.toolCallId.trim())) {
+        return false;
+      }
+      return true;
+    });
+  }
+
   function commitAssistantRoundMeta(assistant: AssistantMessage, round: number) {
     gatewayBridgeEvents.queueToken("", {
       round,
@@ -788,6 +839,61 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
 
     try {
       const assistantRunStartedAt = perfNowMs();
+      const runActiveSteer = activeSteer
+        ? {
+            ...activeSteer,
+            onMessagesEnteredContext: async (confirmation: {
+              messages: UploadedUserMessage[];
+              emittedMessages: Message[];
+              runtimeContext: Context;
+              signal?: AbortSignal;
+            }) => {
+              if (confirmation.signal?.aborted) return false;
+              const messagesToCommit = filterAlreadyCommittedMessages(
+                confirmation.emittedMessages,
+              );
+              const nextState = appendMessagesToConversation(
+                getNextConversationState(),
+                messagesToCommit,
+              );
+              const persisted = await persistConversationMidRun({
+                conversationId,
+                sessionId,
+                providerId,
+                model,
+                selectedModel,
+                cwd: conversationCwd,
+                state: nextState,
+                fallbackTitle,
+                createdAt,
+                titlePromise,
+              }).catch(() => false);
+              if (!persisted) return false;
+
+              applyConversationState(nextState);
+              resetLiveTranscript(transcriptStore);
+              latestAgentEmittedMessages = [];
+              clearPersistableAgentProgress();
+              for (const message of confirmation.messages) {
+                try {
+                  await gatewayBridgeEvents.queueUserMessage(
+                    getUserMessageDisplayText(message as UploadedUserMessage & Record<string, unknown>),
+                    getUserMessageAttachments(message as UploadedUserMessage & Record<string, unknown>),
+                    {
+                      messageId: message.id,
+                      messageRef: findHistoryMessageRefByMessageId(nextState, message.id),
+                    },
+                  );
+                } catch (error) {
+                  console.warn("Failed to project confirmed Agent steer message", error);
+                }
+              }
+              const messageIds = confirmation.messages.map((message) => message.id);
+              onConfirmedSteerMessages?.(messageIds);
+              return true;
+            },
+          }
+        : undefined;
       result = await runAssistantWithTools({
         providerId,
         model,
@@ -800,6 +906,8 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
         nativeWebSearch: nativeWebSearchEnabled,
         tools: combinedTools,
         subagentScheduler,
+        proactiveDelegation,
+        activeSteer: runActiveSteer,
         executeToolCall: combinedExecutor,
         resolveToolGate,
         onTurnStart: (round) => {
@@ -1272,6 +1380,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     sessionId,
     providerId,
     model,
+    selectedModel,
     cwd: conversationCwd,
     state: completedState,
     fallbackTitle,

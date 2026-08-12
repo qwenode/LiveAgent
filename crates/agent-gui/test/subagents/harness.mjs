@@ -465,6 +465,8 @@ export async function createSubagentHarness(options = {}) {
     runtime: parentRuntime.runtime,
     getParentRuntime: options.getParentRuntime,
     fastRuntime: options.fastRuntime,
+    proactiveDelegation: options.proactiveDelegation,
+    maxRounds: options.maxRounds ?? 50,
     workdir: options.workdir ?? "/tmp/liveagent-subagent-test",
     sessionId: options.sessionId === null ? undefined : (options.sessionId ?? "parent-session"),
     templates: options.templates ?? [

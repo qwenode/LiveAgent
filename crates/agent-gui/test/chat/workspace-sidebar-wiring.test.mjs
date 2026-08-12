@@ -26,6 +26,10 @@ const workspaceConversationTranslations = [
   ["chat.workspaceConversationsShowLatest", "收起到最近 5 条", "Show latest 5"],
   ["chat.workspaceConversationsLoadMore", "加载更多 10 条", "Load 10 more"],
 ];
+const workspaceTaskTranslations = [
+  ["chat.workspaceArchiveTasks", "归档任务", "Archive tasks"],
+  ["chat.workspaceCleanupTasks", "清理任务", "Clean up tasks"],
+];
 
 function between(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -108,6 +112,29 @@ test("desktop workspace project names use ellipsis instead of a fade mask", () =
   assert.match(projectRow, /min-w-0 flex-1 truncate/);
 });
 
+test("desktop workspace right-click menu exposes only archive and cleanup task actions", () => {
+  const zhSource = between(i18nSource, '  "zh-CN": {', '\n  },\n\n  "en-US": {');
+  const enSource = i18nSource.slice(i18nSource.indexOf('  "en-US": {'));
+  for (const [key, zh, en] of workspaceTaskTranslations) {
+    assert.equal(zhSource.split(`"${key}": "${zh}"`).length - 1, 1);
+    assert.equal(enSource.split(`"${key}": "${en}"`).length - 1, 1);
+  }
+  const projectRow = between(sidebarSource, "const ProjectRow =", "function HistoryListLoadingSkeleton");
+  assert.match(projectRow, /onContextMenu=\{handleProjectContextMenu\}/);
+  assert.match(projectRow, /onOpenTaskContextMenu\(project, \{ x: event\.clientX, y: event\.clientY \}\)/);
+  const contextMenu = between(sidebarSource, "{projectTaskContextMenu &&", "{bulkDeleteDialog}");
+  assert.equal((contextMenu.match(/role="menuitem"/g) ?? []).length, 2);
+  assert.match(contextMenu, /chat\.workspaceArchiveTasks/);
+  assert.match(contextMenu, /chat\.workspaceCleanupTasks/);
+  assert.doesNotMatch(contextMenu, /workspaceRename|workspaceRemove|workspaceArchive"/);
+  assert.match(containerSource, /onArchiveProjectTasks=\{props\.onArchiveProjectTasks\}/);
+  assert.match(containerSource, /onCleanupProjectTasks=\{props\.onCleanupProjectTasks\}/);
+  assert.match(chatPageSource, /archiveChatHistoryByCwd\(project\.path\)/);
+  assert.match(chatPageSource, /cleanupChatHistoryByCwd\(project\.path\)/);
+  assert.match(chatPageSource, /onArchiveProjectTasks=\{handleArchiveProjectTasks\}/);
+  assert.match(chatPageSource, /onCleanupProjectTasks=\{handleCleanupProjectTasks\}/);
+});
+
 test("desktop workspace conversation opening waits for directory, project, and scope readiness", () => {
   // Project select/new/remove paths still cancel any pending workspace conversation
   // action and validate the directory before activating the project. Conversation
@@ -134,6 +161,25 @@ test("desktop workspace conversation opening waits for directory, project, and s
   assert.match(chatPageSource, /onSelectConversation=\{\(id\) => \{/);
   assert.match(chatPageSource, /handleSelectConversation\(id\)/);
   assert.match(chatPageSource, /onSelectProject=\{handleSelectWorkspaceProject\}/);
+});
+
+test("desktop unseen completion indicators use pre-title dots and translated outcome labels", () => {
+  assert.match(sidebarSource, /function unseenOutcomeDotClass/);
+  assert.equal((sidebarSource.match(/h-2 w-2 shrink-0 rounded-full/g) ?? []).length, 2);
+  assert.match(sidebarSource, /unseenOutcome === "failure"/);
+  assert.match(chatPageSource, /sidebarStore\.clearRunResult\(targetConversationId\)/);
+  assert.match(chatPageSource, /document\.addEventListener\("visibilitychange"/);
+
+  const zhSource = between(i18nSource, '  "zh-CN": {', '\n  },\n\n  "en-US": {');
+  const enSource = i18nSource.slice(i18nSource.indexOf('  "en-US": {'));
+  for (const [key, zh, en] of [
+    ["chat.statusRunCompletedUnseen", "任务已完成，尚未查看", "Task completed, not yet viewed"],
+    ["chat.statusRunFailedUnseen", "任务失败，尚未查看", "Task failed, not yet viewed"],
+    ["chat.statusRunCancelledUnseen", "任务已取消，尚未查看", "Task cancelled, not yet viewed"],
+  ]) {
+    assert.equal(zhSource.split(`"${key}": "${zh}"`).length - 1, 1);
+    assert.equal(enSource.split(`"${key}": "${en}"`).length - 1, 1);
+  }
 });
 
 test("desktop workspace collapse intent is persisted by normalized project path", () => {

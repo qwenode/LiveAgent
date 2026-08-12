@@ -317,6 +317,8 @@ export async function buildBuiltinToolRegistry(
       runtime: subagentRuntime.runtime,
       getParentRuntime: subagentRuntime.getParentRuntime,
       fastRuntime: subagentRuntime.fastRuntime,
+      proactiveDelegation: subagentRuntime.proactiveDelegation,
+      maxRounds: subagentRuntime.maxRounds,
       runtimePlatform: params.runtimePlatform,
       workdir: params.workdir,
       resolveHomeDir,

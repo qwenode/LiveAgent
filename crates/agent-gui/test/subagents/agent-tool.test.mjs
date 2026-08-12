@@ -34,6 +34,59 @@ function findRunnerCallByTask(harness, taskText) {
   );
 }
 
+test("round limit reserves the final round for a tool-free summary", async () => {
+  const boundaryOverrides = [];
+  const harness = await createSubagentHarness({
+    maxRounds: 3,
+    runner: async (params) => {
+      const emitted = [];
+      for (let round = 1; round <= 2; round += 1) {
+        params.onTurnStart?.(round);
+        const assistant = createAssistant(`round-${round}`, { stopReason: "toolUse" });
+        const toolResult = {
+          role: "toolResult",
+          toolCallId: `call-${round}`,
+          toolName: "Read",
+          content: [{ type: "text", text: `evidence-${round}` }],
+          details: {},
+          isError: false,
+          timestamp: Date.now(),
+        };
+        emitted.push(assistant, toolResult);
+        const override = await params.onBeforeNextTurn?.({
+          round,
+          assistant,
+          toolResults: [toolResult],
+          runtimeContext: params.context,
+          emittedMessages: [...emitted],
+          signal: params.signal,
+        });
+        boundaryOverrides.push(override);
+      }
+      const finalAssistant = createAssistant("forced summary");
+      emitted.push(finalAssistant);
+      return {
+        assistant: finalAssistant,
+        messages: emitted,
+        emittedMessages: [...emitted],
+      };
+    },
+  });
+
+  const result = await harness.bundle.executeToolCall(
+    createAgentToolCall({ agents: [{ id: "limited", prompt: "Investigate until limited." }] }),
+  );
+
+  assert.equal(result.isError, false);
+  assert.equal(result.details.agents[0].rounds, 2);
+  assert.equal(boundaryOverrides[0]?.disableTools, undefined);
+  assert.equal(boundaryOverrides[1]?.disableTools, true);
+  assert.deepEqual(boundaryOverrides[1]?.context.tools, []);
+  const finalizeText = contextMessageText(boundaryOverrides[1].context.messages.at(-1));
+  assert.match(finalizeText, /reached the delegated execution round limit/i);
+  assert.match(finalizeText, /Do not call any tools/);
+});
+
 test("readonly happy path: identity prompts, filtered child tools, SendMessage attached", async () => {
   const harness = await createSubagentHarness();
   const result = await harness.bundle.executeToolCall(
@@ -180,6 +233,35 @@ test("search and synthesis jobs use the Fast runtime while omitted jobs keep the
         toolCall.arguments.id === "summarizer" && toolCall.arguments.task_type === "synthesis",
     ),
   );
+});
+
+test("routine jobs use the Fast runtime only when proactive delegation is enabled", async () => {
+  const disabled = await createSubagentHarness({ fastRuntime: FAST_RUNTIME });
+  const rejected = await disabled.bundle.executeToolCall(
+    createAgentToolCall({
+      agents: [{ id: "builder", prompt: "Implement the bounded fix.", task_type: "routine" }],
+    }),
+  );
+  assert.equal(rejected.isError, true);
+  assert.match(rejected.content[0].text, /task_type must be "search" or "synthesis"/);
+  assert.equal(disabled.runnerCalls.length, 0);
+
+  const enabled = await createSubagentHarness({
+    proactiveDelegation: true,
+    fastRuntime: FAST_RUNTIME,
+  });
+  const result = await enabled.bundle.executeToolCall(
+    createAgentToolCall({
+      agents: [{ id: "builder", prompt: "Implement the bounded fix.", task_type: "routine" }],
+    }),
+  );
+  assert.equal(result.isError, false);
+  assert.equal(result.details.agents[0].taskType, "routine");
+  const routineCall = findRunnerCallByTask(enabled, "Implement the bounded fix.");
+  assert.equal(routineCall.providerId, FAST_RUNTIME.providerId);
+  assert.equal(routineCall.model, FAST_RUNTIME.model);
+  assert.equal(routineCall.runtime, FAST_RUNTIME.runtime);
+  assert.match(routineCall.context.systemPrompt, /Current task type: routine/);
 });
 
 test("classified jobs fall back to the parent runtime when no Fast runtime is available", async () => {

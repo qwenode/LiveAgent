@@ -1,12 +1,15 @@
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import type {
   AssistantMessage,
+  AssistantMessageEvent,
+  AssistantMessageEventStream,
   Context,
   Message,
   ModelThinkingLevel,
   ToolCall,
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
+import type { UploadedUserMessage } from "../messages/uploadedFiles";
 import type { PreparedProxyRequest } from "@liveagent/ui/lib/providers/proxy";
 import { buildStreamRequestDebugPayload, type StreamDebugLogger } from "../../debug/agentDebug";
 import { buildMemoryToolsSuffixSection } from "../../memory/prompts/injection";
@@ -142,8 +145,10 @@ export function buildToolsSuffix(
   workdir: string,
   availableToolNames?: readonly string[],
   runtimePlatformInput?: RuntimePlatform,
+  options?: { proactiveDelegation?: boolean },
 ) {
   const runtimePlatform = normalizeRuntimePlatform(runtimePlatformInput) ?? inferRuntimePlatform();
+  const proactiveDelegation = options?.proactiveDelegation === true;
   const platformLabel = runtimePlatformLabel(runtimePlatform);
   const allowAll = availableToolNames === undefined;
   const toolNames = new Set(availableToolNames ?? []);
@@ -442,13 +447,22 @@ export function buildToolsSuffix(
   }
 
   if (has("Agent")) {
+    const delegationStrategy = proactiveDelegation
+      ? [
+          "- Proactively use Agent for bounded, independent work that benefits from a fresh context, including routine implementation, tests, refactoring, fixes, code navigation, research, review, and verification.",
+          "- Prefer delegation when the job has a clear boundary and completion criteria and can proceed without repeated access to unstated parent context. Keep trivial one-step edits or lookups local when delegation would add more overhead than value.",
+          "- Use task_type=routine for bounded day-to-day implementation, tests, refactoring, or fixes so the configured Fast model can handle them. Do not use routine routing for architecture, risky or high-impact decisions, or work that depends heavily on the parent conversation's implicit context.",
+        ]
+      : [
+          "- Use Agent for bounded, independent jobs that benefit from a fresh context: implementation, research, review, discussion, or verification. Do not delegate trivial work you can finish yourself.",
+        ];
     sections.push(
       [
         "## Agent Delegation",
-        "- Use Agent for bounded, independent jobs that benefit from a fresh context: implementation, research, review, discussion, or verification. Do not delegate trivial work you can finish yourself.",
+        ...delegationStrategy,
         "- To run multiple independent jobs in parallel, issue ONE Agent call whose `agents` array lists every job. Use sequential Agent calls only when a later job needs an earlier job's output.",
         "- Default to mode=readonly for research, review, and discussion agents. Use mode=worktree (with apply_policy) only when the subagent is expected to produce file changes or the user explicitly asked for file output.",
-        "- To continue with an existing delegated agent or a previously formed team, call Agent again with the same stable id(s) and only the new prompt — do not impersonate those agents from this transcript and do not restate their identity fields.",
+        "- To continue with an existing delegated agent or a previously formed team, call Agent again with the same stable id(s) and the new prompt. A resumed agent inherits its previous mode, so include mode only when the follow-up needs different access. Do not impersonate those agents from this transcript or restate their identity fields.",
         "- If an Agent call is rejected, no subagents were started; fix every listed issue and retry with one corrected call.",
       ].join("\n"),
     );
@@ -608,8 +622,63 @@ function dedupeRecoveredToolCallsAgainstExisting(params: {
 
 function buildSystemPrompt(base: string | undefined, suffix: string) {
   const head = (base || "").trim();
-  if (!head) return suffix;
-  return `${head}\n\n${suffix}`;
+  const tail = suffix.trim();
+  if (!head) return tail;
+  if (!tail) return head;
+  return `${head}\n\n${tail}`;
+}
+
+function stripToolCallsFromAssistantMessage(message: AssistantMessage): AssistantMessage {
+  const content = message.content.filter((block) => block.type !== "toolCall");
+  if (content.length === message.content.length && message.stopReason !== "toolUse") {
+    return message;
+  }
+  return {
+    ...message,
+    content,
+    stopReason: message.stopReason === "toolUse" ? "stop" : message.stopReason,
+  };
+}
+
+function stripToolCallsFromAssistantStream(
+  source: AssistantMessageEventStream,
+): AssistantMessageEventStream {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for await (const event of source) {
+        if (
+          event.type === "toolcall_start" ||
+          event.type === "toolcall_delta" ||
+          event.type === "toolcall_end"
+        ) {
+          continue;
+        }
+        if (event.type === "done") {
+          const message = stripToolCallsFromAssistantMessage(event.message);
+          yield {
+            type: "done",
+            reason: message.stopReason === "length" ? "length" : "stop",
+            message,
+          } satisfies AssistantMessageEvent;
+          continue;
+        }
+        if (event.type === "error") {
+          yield {
+            ...event,
+            error: stripToolCallsFromAssistantMessage(event.error),
+          } satisfies AssistantMessageEvent;
+          continue;
+        }
+        yield {
+          ...event,
+          partial: stripToolCallsFromAssistantMessage(event.partial),
+        } satisfies AssistantMessageEvent;
+      }
+    },
+    async result() {
+      return stripToolCallsFromAssistantMessage(await source.result());
+    },
+  } as unknown as AssistantMessageEventStream;
 }
 
 function toSyntheticToolCall(params: {
@@ -727,7 +796,26 @@ function toMessageToolResult(message: Message, toolCall: ToolCall): ToolResultMe
 type TurnContextOverride = {
   context: Context;
   emittedMessages: Message[];
+  disableTools?: boolean;
 } | null;
+
+export type AgentRunnerActiveSteer = {
+  conversationId: string;
+  runToken: string;
+  register: (
+    conversationId: string,
+    handler: { runToken: string; deliver: (message: UploadedUserMessage) => boolean },
+  ) => boolean | void;
+  clear: (conversationId: string, runToken: string) => boolean | void;
+  onDeliveryAvailable?: (conversationId: string, runToken: string) => void;
+  onDeliveryClosed?: (conversationId: string, runToken: string) => void;
+  onMessagesEnteredContext: (params: {
+    messages: UploadedUserMessage[];
+    emittedMessages: Message[];
+    runtimeContext: Context;
+    signal?: AbortSignal;
+  }) => Promise<boolean> | boolean;
+};
 
 type ToolExecutionEventContext = {
   parentToolCall: ToolCall;
@@ -747,6 +835,12 @@ function getMessagesSinceBaseline(agent: Agent | null, baselineIndex: number): M
   if (baselineIndex <= 0) return messages.slice();
   if (baselineIndex >= messages.length) return [];
   return messages.slice(baselineIndex);
+}
+
+function readStableUserMessageId(message: Message): string | null {
+  if (message.role !== "user") return null;
+  const id = (message as Message & { id?: unknown }).id;
+  return typeof id === "string" && id.trim() ? id.trim() : null;
 }
 
 function findLastAssistantMessage(messages: Message[]): AssistantMessage | null {
@@ -825,6 +919,8 @@ export async function runAssistantWithTools(params: {
   signal?: AbortSignal;
   debugLogger?: StreamDebugLogger;
   subagentScheduler?: SubagentScheduler;
+  proactiveDelegation?: boolean;
+  activeSteer?: AgentRunnerActiveSteer;
   allowEmptyWorkdir?: boolean;
   /**
    * 工具审批门:每次工具执行前(截断校验之后)对规范化后的调用调用一次。
@@ -1202,12 +1298,22 @@ export async function runAssistantWithTools(params: {
       params.workdir,
       llmTools.map((tool) => tool.name),
       params.runtimePlatform,
+      { proactiveDelegation: params.proactiveDelegation },
     );
     let currentSystemPrompt = params.context.systemPrompt;
-    let pendingTurnOverridePromise: Promise<TurnContextOverride> | null = null;
+    let toolsDisabledForRemainingRun = false;
+    let pendingTurnOverrideRequest:
+      | {
+          round: number;
+          assistant: AssistantMessage;
+          toolResults: ToolResultMessage[];
+          signal?: AbortSignal;
+        }
+      | null = null;
     let emittedBaselineIndex = params.context.messages.length;
     let latestAgentEndMessages: Message[] = [];
     let agentTools: AgentTool<any>[] = [];
+    const pendingSteerMessageIds = new Set<string>();
     const pendingRecoveredSeedTurnRef: {
       current: {
         round: number;
@@ -1398,18 +1504,47 @@ export async function runAssistantWithTools(params: {
     }
 
     async function consumePendingTurnOverride(): Promise<TurnContextOverride> {
-      const pending = pendingTurnOverridePromise;
-      if (!pending) return null;
-      pendingTurnOverridePromise = null;
-      return pending;
+      const pending = pendingTurnOverrideRequest;
+      pendingTurnOverrideRequest = null;
+      if (!pending || !params.onBeforeNextTurn) return null;
+      return params.onBeforeNextTurn({
+        round: pending.round,
+        assistant: pending.assistant,
+        toolResults: pending.toolResults,
+        runtimeContext: {
+          systemPrompt: currentSystemPrompt,
+          messages: getAgentMessages(agent).slice(),
+          tools: llmTools,
+        },
+        emittedMessages: getMessagesSinceBaseline(agent, emittedBaselineIndex),
+        signal: pending.signal,
+      });
     }
+
+    const currentToolsSuffix = () => (toolsDisabledForRemainingRun ? "" : toolsSuffix);
 
     function applyTurnContextOverride(override: Exclude<TurnContextOverride, null>) {
       if (!agent) return;
+      const injectedSteerMessages = getAgentMessages(agent).filter((message) => {
+        const id = readStableUserMessageId(message);
+        return id !== null && pendingSteerMessageIds.has(id);
+      });
+      const overrideMessageIds = new Set(
+        override.context.messages
+          .map((message) => readStableUserMessageId(message))
+          .filter((id): id is string => id !== null),
+      );
       currentSystemPrompt = override.context.systemPrompt;
-      agent.state.systemPrompt = buildSystemPrompt(currentSystemPrompt, toolsSuffix);
-      agent.state.messages = override.context.messages.slice();
-      agent.state.tools = agentTools;
+      toolsDisabledForRemainingRun ||= override.disableTools === true;
+      agent.state.systemPrompt = buildSystemPrompt(currentSystemPrompt, currentToolsSuffix());
+      agent.state.messages = [
+        ...override.context.messages,
+        ...injectedSteerMessages.filter((message) => {
+          const id = readStableUserMessageId(message);
+          return id !== null && !overrideMessageIds.has(id);
+        }),
+      ];
+      agent.state.tools = toolsDisabledForRemainingRun ? [] : agentTools;
       emittedBaselineIndex = Math.max(
         0,
         override.context.messages.length - override.emittedMessages.length,
@@ -1509,13 +1644,14 @@ export async function runAssistantWithTools(params: {
       const round = ++streamRound;
       const retryAttemptsForRound: RetryAttemptRecord[] = [];
       params.onRetryAttempts?.(round, retryAttemptsForRound);
-      const streamTools =
-        streamContext.tools ?? (agent?.state.tools as Context["tools"] | undefined) ?? llmTools;
+      const streamTools = toolsDisabledForRemainingRun
+        ? []
+        : (streamContext.tools ?? (agent?.state.tools as Context["tools"] | undefined) ?? llmTools);
       const effectiveContext = sanitizeContextForModelRequest({
         ...streamContext,
         // Keep the runtime-only tool rules out of compaction and persistence,
         // then reattach them at the provider boundary on every model round.
-        systemPrompt: buildSystemPrompt(currentSystemPrompt, toolsSuffix),
+        systemPrompt: buildSystemPrompt(currentSystemPrompt, currentToolsSuffix()),
         messages: streamContext.messages.slice(),
         tools: filterRequestTools(streamTools),
       });
@@ -1533,8 +1669,9 @@ export async function runAssistantWithTools(params: {
             : targetModel.api === "openai-responses" || targetModel.api === "openai-completions"
               ? toSimpleStreamReasoning(target.runtime.reasoning)
               : undefined;
-        const targetNativeWebSearchStatus =
-          target.index === 0
+        const targetNativeWebSearchStatus = toolsDisabledForRemainingRun
+          ? null
+          : target.index === 0
             ? nativeWebSearchStatus
             : resolveProviderNativeWebSearchStatus({
                 providerId: target.providerId,
@@ -1591,7 +1728,7 @@ export async function runAssistantWithTools(params: {
           context: effectiveContext,
           model: targetModel,
           workdir: params.workdir,
-          nativeWebSearch: params.nativeWebSearch,
+          nativeWebSearch: toolsDisabledForRemainingRun ? false : params.nativeWebSearch,
           debugLogger: params.debugLogger,
           extra: {
             round,
@@ -1652,10 +1789,12 @@ export async function runAssistantWithTools(params: {
         return streamSimpleByApi(targetModel, effectiveContext, streamOptions);
       };
 
-      const wrapWithGuard = (stream: ReturnType<typeof streamSimpleByApi>) =>
-        wrapStreamWithToolCallArgumentGuard(stream, (toolCall, reason) => {
+      const wrapWithGuard = (stream: ReturnType<typeof streamSimpleByApi>) => {
+        const guarded = wrapStreamWithToolCallArgumentGuard(stream, (toolCall, reason) => {
           incompleteToolCallArguments.set(toolCall.id, reason);
         });
+        return toolsDisabledForRemainingRun ? stripToolCallsFromAssistantStream(guarded) : guarded;
+      };
 
       if (!failoverParams || failoverParams.fallbacks.length === 0) {
         return wrapWithGuard(buildTargetRoundStream(primaryRoundTarget));
@@ -1817,15 +1956,75 @@ export async function runAssistantWithTools(params: {
         }
         return undefined;
       },
-      transformContext: async (_messages, _signal) => {
+      transformContext: async (_messages, signal) => {
+        reconcileTruncatedToolResults();
+        const preOverrideMessages = getAgentMessages(agent);
+        const confirmedSteerMessages = preOverrideMessages.filter(
+          (message): message is UploadedUserMessage => {
+            const id = readStableUserMessageId(message);
+            return id !== null && pendingSteerMessageIds.has(id);
+          },
+        );
+        let committedSteerMessageIds: string[] = [];
+        if (confirmedSteerMessages.length > 0 && params.activeSteer) {
+          const committed = await params.activeSteer.onMessagesEnteredContext({
+            messages: confirmedSteerMessages,
+            emittedMessages: getMessagesSinceBaseline(agent, emittedBaselineIndex),
+            runtimeContext: {
+              systemPrompt: currentSystemPrompt,
+              messages: preOverrideMessages.slice(),
+              tools: llmTools,
+            },
+            signal,
+          });
+          if (!committed) {
+            throw new Error("Failed to persist Agent steer messages before the next model turn.");
+          }
+          committedSteerMessageIds = confirmedSteerMessages.flatMap((message) => {
+            const id = readStableUserMessageId(message);
+            return id ? [id] : [];
+          });
+          // The history callback committed every message through this steer boundary.
+          // Rebaseline before building a pending compact/override so it consumes the
+          // already-persisted state instead of appending the same emitted payload again.
+          emittedBaselineIndex = preOverrideMessages.length;
+        }
+
         const override = await consumePendingTurnOverride();
         if (override) {
           applyTurnContextOverride(override);
         }
         reconcileTruncatedToolResults();
-        return getAgentMessages(agent).slice();
+        const runtimeMessages = getAgentMessages(agent);
+        if (committedSteerMessageIds.length > 0) {
+          for (const id of committedSteerMessageIds) {
+            pendingSteerMessageIds.delete(id);
+          }
+          emittedBaselineIndex = runtimeMessages.length;
+        }
+        return runtimeMessages.slice();
       },
     });
+
+    if (params.activeSteer) {
+      params.activeSteer.register(params.activeSteer.conversationId, {
+        runToken: params.activeSteer.runToken,
+        deliver: (message) => {
+          const id = readStableUserMessageId(message);
+          if (!id || pendingSteerMessageIds.has(id)) return false;
+          if (getAgentMessages(agent).some((existing) => readStableUserMessageId(existing) === id)) {
+            return false;
+          }
+          pendingSteerMessageIds.add(id);
+          agent?.steer(message);
+          return true;
+        },
+      });
+      params.activeSteer.onDeliveryAvailable?.(
+        params.activeSteer.conversationId,
+        params.activeSteer.runToken,
+      );
+    }
 
     const textReconciler = createStreamingTextReconciler();
 
@@ -1937,6 +2136,19 @@ export async function runAssistantWithTools(params: {
                 };
               }
             }
+            if (toolsDisabledForRemainingRun && normalizedSeedTurn) {
+              const recoveredToolCallIds = new Set(
+                normalizedSeedTurn.toolCalls.map((toolCall) => toolCall.id),
+              );
+              assistantWithRecoveredToolCalls = {
+                ...assistantWithRecoveredToolCalls,
+                content: assistantWithRecoveredToolCalls.content.filter(
+                  (block) => block.type !== "toolCall" || !recoveredToolCallIds.has(block.id),
+                ),
+                stopReason: assistantWithHostedSearch.stopReason,
+              };
+              recoveredSeedToolCalls = [];
+            }
             const assistantMessage = normalizeAssistantToolCallNamesForExecution(
               assistantWithRecoveredToolCalls,
             );
@@ -1999,22 +2211,13 @@ export async function runAssistantWithTools(params: {
             event.message.stopReason === "toolUse" &&
             toolResults.length > 0
           ) {
-            const runtimeMessages = getAgentMessages(agent);
-            const runtimeSnapshot: Context = {
-              systemPrompt: currentSystemPrompt,
-              messages: runtimeMessages.slice(),
-              tools: llmTools,
-            };
-            const emittedSnapshot = getMessagesSinceBaseline(agent, emittedBaselineIndex);
             const assistant = event.message;
-            pendingTurnOverridePromise = params.onBeforeNextTurn({
+            pendingTurnOverrideRequest = {
               round: currentRound,
               assistant,
               toolResults,
-              runtimeContext: runtimeSnapshot,
-              emittedMessages: emittedSnapshot,
               signal: params.signal,
-            });
+            };
           }
           break;
         }
@@ -2084,7 +2287,7 @@ export async function runAssistantWithTools(params: {
 
         const recoveredSeedTurn = pendingRecoveredSeedTurnRef.current;
         pendingRecoveredSeedTurnRef.current = null;
-        if (recoveredSeedTurn === null) {
+        if (recoveredSeedTurn === null || toolsDisabledForRemainingRun) {
           break;
         }
         const recoveredSeedRound = recoveredSeedTurn.round;
@@ -2140,18 +2343,12 @@ export async function runAssistantWithTools(params: {
 
         if (params.onBeforeNextTurn) {
           throwIfRunnerCancelled(params.signal);
-          pendingTurnOverridePromise = params.onBeforeNextTurn({
+          pendingTurnOverrideRequest = {
             round: recoveredSeedRound,
             assistant: recoveredSeedAssistant,
             toolResults: syntheticToolResults,
-            runtimeContext: {
-              systemPrompt: currentSystemPrompt,
-              messages: getAgentMessages(agent).slice(),
-              tools: llmTools,
-            },
-            emittedMessages: getMessagesSinceBaseline(agent, emittedBaselineIndex),
             signal: params.signal,
-          });
+          };
         }
       }
 
@@ -2194,6 +2391,16 @@ export async function runAssistantWithTools(params: {
       nativeWebSearchStatusController.finish();
       abortListener?.();
       unsubscribe();
+      if (params.activeSteer) {
+        params.activeSteer.clear(
+          params.activeSteer.conversationId,
+          params.activeSteer.runToken,
+        );
+        params.activeSteer.onDeliveryClosed?.(
+          params.activeSteer.conversationId,
+          params.activeSteer.runToken,
+        );
+      }
     }
   });
 }

@@ -25,6 +25,7 @@ function baseInput(overrides = {}) {
     theme: "system",
     conversations: [],
     runningConversationIds: new Set(),
+    unseenRunResultCount: 0,
     workspaceProjects: [],
     activeWorkspaceProjectId: undefined,
     archivedWorkspaceProjectPaths: [],
@@ -35,6 +36,11 @@ function baseInput(overrides = {}) {
     ...overrides,
   };
 }
+
+test("tray show item reflects the fixed global F2 window toggle", () => {
+  const model = trayMenu.buildTrayMenuModel(baseInput());
+  assert.equal(model.showAccelerator, "F2");
+});
 
 test("recent list truncates to 8 with view-all flag and skips pending rows", () => {
   const conversations = Array.from({ length: 10 }, (_, index) =>
@@ -163,19 +169,26 @@ test("badge text appears only with the pref on and runs active", () => {
     }),
   );
   assert.equal(withBadge.badgeText, "1");
+  assert.equal(withBadge.taskbarBadgeCount, 0);
 
   const noRuns = trayMenu.buildTrayMenuModel(
-    baseInput({ prefs: { showConversationTitles: true, showRunningBadge: true } }),
+    baseInput({
+      unseenRunResultCount: 3,
+      prefs: { showConversationTitles: true, showRunningBadge: true },
+    }),
   );
   assert.equal(noRuns.badgeText, null);
+  assert.equal(noRuns.taskbarBadgeCount, 3);
 
   const prefOff = trayMenu.buildTrayMenuModel(
     baseInput({
       conversations: [conversation("c1", "跑")],
       runningConversationIds: new Set(["c1"]),
+      unseenRunResultCount: 4,
     }),
   );
   assert.equal(prefOff.badgeText, null);
+  assert.equal(prefOff.taskbarBadgeCount, 0);
 });
 
 test("en-US locale localizes static labels and theme summary", () => {

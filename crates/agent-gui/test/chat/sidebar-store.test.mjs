@@ -1086,3 +1086,107 @@ test("archived workspace feeds skip reconnect reads and refresh after restore", 
   );
   store.stop();
 });
+
+
+test("unseen run results deduplicate, aggregate by severity, clear on new runs, and reset on deletion", () => {
+  let clock = 100;
+  const fake = createFakeBackend();
+  const store = createSidebarStore(fake.backend, { now: () => clock });
+  store.start();
+  store.upsertLocal(conversation("success", { cwd: "/tmp/project" }));
+  store.upsertLocal(conversation("cancelled", { cwd: "/tmp/project" }));
+  store.upsertLocal(conversation("failure", { cwd: "/tmp/project" }));
+
+  store.markRunResult({ conversationId: "success", outcome: "success", runId: "run-1" });
+  store.markRunResult({ conversationId: "success", outcome: "failure", runId: "run-1" });
+  assert.equal(store.getSnapshot().unseenRunResults.get("success")?.outcome, "success");
+
+  clock += 1;
+  store.markRunResult({
+    conversationId: "cancelled",
+    outcome: "cancelled",
+    runId: "run-2",
+  });
+  clock += 1;
+  store.markRunResult({ conversationId: "failure", outcome: "failure", runId: "run-3" });
+  assert.equal(store.getSnapshot().unseenWorkdirOutcomes.get("/tmp/project"), "failure");
+
+  store.applyRunningPatch({
+    conversationId: "failure",
+    running: true,
+    workdir: "/tmp/project",
+    updatedAt: 200,
+  });
+  assert.equal(store.getSnapshot().unseenRunResults.has("failure"), false);
+  store.markRunResult({
+    conversationId: "failure",
+    outcome: "failure",
+    runId: "old-run",
+    updatedAt: 199,
+  });
+  assert.equal(store.getSnapshot().unseenRunResults.has("failure"), false);
+
+  store.upsertLocal(conversation("revived", { cwd: "/tmp/project" }));
+  store.markRunResult({
+    conversationId: "revived",
+    outcome: "failure",
+    runId: "run-revived",
+    updatedAt: 210,
+  });
+  store.applyRunningPatch({
+    conversationId: "revived",
+    running: true,
+    runId: "run-revived",
+    workdir: "/tmp/project",
+    updatedAt: 211,
+  });
+  assert.equal(store.getSnapshot().unseenRunResults.has("revived"), false);
+  store.applyRunningPatch({ conversationId: "revived", running: false, updatedAt: 212 });
+  store.markRunResult({
+    conversationId: "revived",
+    outcome: "success",
+    runId: "run-revived",
+    updatedAt: 213,
+  });
+  assert.equal(store.getSnapshot().unseenRunResults.get("revived")?.outcome, "success");
+  store.markRunResult({
+    conversationId: "revived",
+    outcome: "failure",
+    runId: "run-revived",
+    updatedAt: 214,
+  });
+  assert.equal(
+    store.getSnapshot().unseenRunResults.get("revived")?.outcome,
+    "success",
+    "the genuine terminal is recorded once after resurrection",
+  );
+
+  store.markRunResult({
+    conversationId: "success",
+    outcome: "success",
+    runId: "seen-run",
+    seen: true,
+    updatedAt: 300,
+  });
+  assert.equal(store.getSnapshot().unseenRunResults.has("success"), false);
+
+  store.markRunResult({
+    conversationId: "success",
+    outcome: "failure",
+    runId: "seen-failure-run",
+    seen: true,
+    updatedAt: 350,
+  });
+  assert.equal(store.getSnapshot().unseenRunResults.get("success")?.outcome, "failure");
+
+  fake.emit({ kind: "delete", conversationId: "success" });
+  store.upsertLocal(conversation("success", { cwd: "/tmp/project" }));
+  store.markRunResult({
+    conversationId: "success",
+    outcome: "success",
+    runId: "run-1",
+    updatedAt: 400,
+  });
+  assert.equal(store.getSnapshot().unseenRunResults.get("success")?.runId, "run-1");
+  store.stop();
+});

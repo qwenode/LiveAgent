@@ -506,11 +506,28 @@ test("agent tool rules prefer one parallel Agent batch over sequential calls", (
     /Use sequential Agent calls only when a later job needs an earlier job's output/,
   );
   assert.match(suffix, /Default to mode=readonly for research, review, and discussion agents/);
-  assert.match(
-    suffix,
-    /call Agent again with the same stable id\(s\) and only the new prompt/,
-  );
+  assert.match(suffix, /call Agent again with the same stable id\(s\) and the new prompt/);
+  assert.match(suffix, /include mode only when the follow-up needs different access/);
   assert.match(suffix, /If an Agent call is rejected, no subagents were started/);
+});
+
+test("agent tool rules switch to proactive routine delegation only when enabled", () => {
+  const conservative = agentRunnerModule.buildToolsSuffix("/workspace", ["Agent"]);
+  assert.match(conservative, /Do not delegate trivial work you can finish yourself/);
+  assert.doesNotMatch(conservative, /task_type=routine/);
+  assert.doesNotMatch(conservative, /Proactively use Agent/);
+
+  const proactive = agentRunnerModule.buildToolsSuffix(
+    "/workspace",
+    ["Agent"],
+    undefined,
+    { proactiveDelegation: true },
+  );
+  assert.match(proactive, /Proactively use Agent for bounded, independent work/);
+  assert.match(proactive, /routine implementation, tests, refactoring, fixes/);
+  assert.match(proactive, /Use task_type=routine for bounded day-to-day implementation/);
+  assert.match(proactive, /Do not use routine routing for architecture, risky or high-impact decisions/);
+  assert.match(proactive, /Keep trivial one-step edits or lookups local/);
 });
 
 test("SendMessage tool rules explain parent-private visibility", () => {

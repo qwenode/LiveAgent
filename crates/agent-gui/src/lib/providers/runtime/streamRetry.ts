@@ -37,6 +37,12 @@ export type StreamRetryConfig = {
 
 export type StreamRetryOptions = StreamRetryConfig & {
   signal?: AbortSignal;
+  /** Used to synthesize a terminal message when the stream fails before emitting one. */
+  model?: {
+    api: AssistantMessage["api"];
+    provider: AssistantMessage["provider"];
+    id: string;
+  };
 };
 
 type TerminalEvent = Extract<AssistantMessageEvent, { type: "done" | "error" }>;
@@ -56,6 +62,7 @@ function isCommittingEvent(event: AssistantMessageEvent): boolean {
 const RETRYABLE_PREMATURE_STREAM_END_ERROR_PATTERN = new RegExp(
   [
     "\\bstream_error\\b",
+    "unexpected\\s*EOF",
     "OpenAI Responses stream ended before a terminal response event",
     "stream ended without (?:a )?terminal event(?: or completed response)?",
   ].join("|"),
@@ -68,10 +75,6 @@ export function isRetryablePrematureStreamEndError(errorMessage: string | undefi
 
 function isTerminalEvent(event: AssistantMessageEvent): event is TerminalEvent {
   return event.type === "done" || event.type === "error";
-}
-
-function terminalMessage(event: TerminalEvent) {
-  return event.type === "done" ? event.message : event.error;
 }
 
 function hasMeaningfulAssistantContent(message: AssistantMessage): boolean {
@@ -100,12 +103,67 @@ function buildEmptyAssistantResponseError(message: AssistantMessage): AssistantM
   };
 }
 
-function isRetryableStreamError(event: TerminalEvent): boolean {
-  const message = terminalMessage(event);
+function isRetryableStreamMessage(message: AssistantMessage): boolean {
   return (
     isRetryableAssistantError(message) ||
     (message.stopReason === "error" && isRetryablePrematureStreamEndError(message.errorMessage))
   );
+}
+
+function eventAssistantMessage(event: AssistantMessageEvent): AssistantMessage {
+  if (event.type === "done") return event.message;
+  if (event.type === "error") return event.error;
+  return event.partial;
+}
+
+function readStreamFailureMessage(error: unknown): string {
+  if (error instanceof Error) return error.message.trim() || error.name || "Unknown error";
+  const message = String(error).trim();
+  return message || "Unknown error";
+}
+
+function isAbortStreamFailure(error: unknown, signal: AbortSignal | undefined): boolean {
+  if (!signal?.aborted) return false;
+  if (error === signal.reason) return true;
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  const message = readStreamFailureMessage(error);
+  return /\b(?:abort(?:ed)?|cancel(?:led|ed)?)\b/i.test(message);
+}
+
+function buildStreamFailureAssistantMessage(
+  error: unknown,
+  lastMessage: AssistantMessage | undefined,
+  options: StreamRetryOptions | undefined,
+): AssistantMessage {
+  const aborted = isAbortStreamFailure(error, options?.signal);
+  const effectiveError = aborted ? (options?.signal?.reason ?? error) : error;
+  return {
+    role: "assistant",
+    content: lastMessage?.content ?? [],
+    api: lastMessage?.api ?? options?.model?.api ?? "anthropic-messages",
+    provider: lastMessage?.provider ?? options?.model?.provider ?? "anthropic",
+    model: lastMessage?.model ?? options?.model?.id ?? "unknown",
+    usage: lastMessage?.usage ?? {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: aborted ? "aborted" : "error",
+    errorMessage: readStreamFailureMessage(effectiveError),
+    timestamp: lastMessage?.timestamp ?? Date.now(),
+  };
+}
+
+function pushStreamFailure(output: AssistantMessageEventStream, message: AssistantMessage): void {
+  const error = {
+    ...message,
+    stopReason: message.stopReason === "aborted" ? "aborted" : "error",
+  } satisfies AssistantMessage;
+  output.push({ type: "error", reason: error.stopReason, error });
+  output.end(error);
 }
 
 /** Codex-style backoff: base * factor^(attempt-1) * uniform(0.9, 1.1), uncapped. */
@@ -160,62 +218,74 @@ export function withStreamRetry(
   const signal = options?.signal;
 
   const output = createAssistantMessageEventStream();
-  const firstSource = factory();
 
   void (async () => {
     let attempt = 1;
-    let source = firstSource;
     let hasRetried = false;
 
     while (true) {
       let committed = false;
       const buffered: AssistantMessageEvent[] = [];
       let terminal: TerminalEvent | undefined;
+      let lastMessage: AssistantMessage | undefined;
+      let result: AssistantMessage | undefined;
+      let thrownFailure: AssistantMessage | undefined;
 
-      for await (const event of source) {
-        if (!committed && isCommittingEvent(event)) {
-          committed = true;
-          for (const bufferedEvent of buffered.splice(0)) output.push(bufferedEvent);
-          if (hasRetried) {
-            hasRetried = false;
-            options?.onRetryRecovered?.();
+      try {
+        // Keep factory creation inside the attempt boundary: provider SDKs can
+        // throw synchronously before returning an event stream.
+        const source = factory();
+        for await (const event of source) {
+          lastMessage = eventAssistantMessage(event);
+          if (!committed && isCommittingEvent(event)) {
+            committed = true;
+            for (const bufferedEvent of buffered.splice(0)) output.push(bufferedEvent);
+            if (hasRetried) {
+              hasRetried = false;
+              options?.onRetryRecovered?.();
+            }
           }
+          if (committed) {
+            output.push(event);
+          } else {
+            buffered.push(event);
+          }
+          if (isTerminalEvent(event)) terminal = event;
         }
-        if (committed) {
-          output.push(event);
-        } else {
-          buffered.push(event);
-        }
-        if (isTerminalEvent(event)) terminal = event;
+
+        // Some stream adapters only expose their terminal failure via result(),
+        // while malformed transports may reject result() outright.
+        result = await source.result();
+        lastMessage = result;
+      } catch (error) {
+        thrownFailure = buildStreamFailureAssistantMessage(error, lastMessage, options);
       }
 
-      // Some streams (notably minimal test doubles) never yield a terminal
-      // done/error event through iteration and only expose the final message
-      // via result(), so empty-response detection must inspect the result too.
-      const result = await source.result();
-      const emptyResponse = !committed && isCleanEmptyAssistantResponse(result);
+      const emptyResponse = Boolean(result && !committed && isCleanEmptyAssistantResponse(result));
+      const resultFailure =
+        result?.stopReason === "error" || result?.stopReason === "aborted" ? result : undefined;
+      const retryFailure = thrownFailure ?? resultFailure;
       const retryErrorMessage = emptyResponse
         ? EMPTY_ASSISTANT_RESPONSE_ERROR
-        : terminal?.type === "error" && !committed && isRetryableStreamError(terminal)
-          ? terminalMessage(terminal).errorMessage || "Unknown error"
+        : !committed && retryFailure && isRetryableStreamMessage(retryFailure)
+          ? retryFailure.errorMessage || "Unknown error"
           : undefined;
 
       if (retryErrorMessage && !disabled && attempt < maxAttempts) {
-        attempt += 1;
-        options?.onRetry?.(attempt - 1, maxAttempts - 1, retryErrorMessage);
+        options?.onRetry?.(attempt, maxAttempts - 1, retryErrorMessage);
         hasRetried = true;
         try {
-          await sleepWithAbort(computeStreamRetryBackoffMs(attempt - 1), signal);
-          source = factory();
+          await sleepWithAbort(computeStreamRetryBackoffMs(attempt), signal);
+          attempt += 1;
           continue;
         } catch {
-          // Aborted mid-backoff, or the next attempt failed to start —
-          // surface the prior attempt's real failure below instead of
-          // hanging the consumer on a retry that will never happen.
+          // Preserve the failure that triggered the retry. This matches the
+          // terminal-event path and avoids reporting a different error solely
+          // because cancellation happened during the backoff sleep.
         }
       }
 
-      if (emptyResponse) {
+      if (emptyResponse && result) {
         const error = buildEmptyAssistantResponseError(result);
         output.push({ type: "error", reason: "error", error });
         output.end(error);
@@ -225,9 +295,32 @@ export function withStreamRetry(
       if (!committed) {
         for (const bufferedEvent of buffered) output.push(bufferedEvent);
       }
-      // output.end() is idempotent once a terminal event has already been
-      // pushed above, so this also safety-nets terminal-less test doubles.
-      output.end(result);
+
+      if (thrownFailure) {
+        pushStreamFailure(output, thrownFailure);
+        return;
+      }
+
+      if (resultFailure && terminal === undefined) {
+        pushStreamFailure(output, resultFailure);
+        return;
+      }
+
+      if (result) {
+        // output.end() is idempotent once a terminal event has already been
+        // pushed above, so this also safety-nets terminal-less test doubles.
+        output.end(result);
+        return;
+      }
+
+      pushStreamFailure(
+        output,
+        buildStreamFailureAssistantMessage(
+          new Error("Stream ended without a result"),
+          lastMessage,
+          options,
+        ),
+      );
       return;
     }
   })();

@@ -183,6 +183,7 @@ test("agent turn preserves suppressed parent Agent trace for cancellation persis
     providerId: "codex",
     model: "gpt-5",
     runtime: {},
+    subagentMaxRounds: 50,
     runtimeModel: {
       provider: "codex",
       api: "openai-responses",
@@ -351,6 +352,7 @@ test("AskUserQuestion becomes visible only when execution starts while ordinary 
       providerId: "codex",
       model: "gpt-5",
       runtime: {},
+    subagentMaxRounds: 50,
       runtimeModel: {
         provider: "codex",
         api: "openai-responses",
@@ -483,6 +485,7 @@ test("same-turn failover updates the parent runtime exposed to Agent batches", a
       providerId: "codex",
       model: "gpt-5",
       runtime: primaryRuntime,
+      subagentMaxRounds: 50,
       failover: {
         config: { maxSwitches: 2, failureThreshold: 3, cooldownSeconds: 60 },
         primary: {

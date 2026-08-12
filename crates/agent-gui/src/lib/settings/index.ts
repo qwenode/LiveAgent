@@ -47,6 +47,8 @@ export type ProviderId = "codex" | "claude_code" | "gemini" | "xai";
 
 export type ExecutionMode = "text" | "tools" | "agent-dev";
 
+export type RunningAgentSendMode = "interrupt" | "steer";
+
 export type CodexRequestFormat = "openai-completions" | "openai-responses";
 
 export type ReasoningLevel = "off" | ThinkingLevel;
@@ -185,9 +187,15 @@ export type ChatTranscriptSettings = {
   width: number;
 };
 
+export const DEFAULT_SUBAGENT_MAX_ROUNDS = 50;
+export const MIN_SUBAGENT_MAX_ROUNDS = 2;
+export const MAX_SUBAGENT_MAX_ROUNDS = 200;
+
 export type CustomSettings = {
   conversationTitleModel?: SelectedModel;
   subagentFastModel?: SelectedModel;
+  subagentProactiveDelegation: boolean;
+  subagentMaxRounds: number;
   chatSidebar: ChatSidebarSettings;
   chatTranscript: ChatTranscriptSettings;
   rightDock: RightDockSettings;
@@ -277,6 +285,7 @@ export type ToolPolicy = "allow" | "ask" | "deny";
 
 export type SystemSettings = {
   executionMode: ExecutionMode;
+  runningAgentSendMode: RunningAgentSendMode;
   workdir: string;
   /**
    * 按规范工具名(内置名 / `mcp_*`)覆盖审批策略;缺省由
@@ -1837,6 +1846,7 @@ export function normalizeSystemSettings(input: unknown): SystemSettings {
   const obj = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
   return {
     executionMode: normalizeExecutionMode(obj.executionMode),
+    runningAgentSendMode: obj.runningAgentSendMode === "steer" ? "steer" : "interrupt",
     workdir: normalizeWorkdir(obj.workdir),
     toolPolicies: normalizeToolPolicies(obj.toolPolicies),
     workspaceProjects: normalizeWorkspaceProjects(obj.workspaceProjects),
@@ -2471,6 +2481,17 @@ export function normalizeChatTranscriptSettings(input: unknown): ChatTranscriptS
   };
 }
 
+export function normalizeSubagentMaxRounds(input: unknown): number {
+  const numeric =
+    typeof input === "number"
+      ? input
+      : typeof input === "string" && input.trim()
+        ? Number(input)
+        : NaN;
+  if (!Number.isFinite(numeric)) return DEFAULT_SUBAGENT_MAX_ROUNDS;
+  return Math.min(MAX_SUBAGENT_MAX_ROUNDS, Math.max(MIN_SUBAGENT_MAX_ROUNDS, Math.floor(numeric)));
+}
+
 export function normalizeCustomSettings(
   input: unknown,
   customProviders: CustomProvider[],
@@ -2488,6 +2509,8 @@ export function normalizeCustomSettings(
       normalizeSelectedModel(obj.subagentFastModel),
       customProviders,
     ),
+    subagentProactiveDelegation: obj.subagentProactiveDelegation === true,
+    subagentMaxRounds: normalizeSubagentMaxRounds(obj.subagentMaxRounds),
     chatSidebar: {
       projectsCollapsed: chatSidebar.projectsCollapsed === true,
       recentCollapsed: chatSidebar.recentCollapsed === true,
@@ -2619,6 +2642,7 @@ export function getDefaultSettings(): AppSettings {
   return {
     system: {
       executionMode: "tools",
+      runningAgentSendMode: "interrupt",
       workdir: "",
       workspaceProjects: [],
       activeWorkspaceProjectId: undefined,

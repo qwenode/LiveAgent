@@ -21,7 +21,7 @@ export const SUBAGENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 export type SubagentMode = "readonly" | "worktree";
 export type SubagentApplyPolicy = "none" | "explicit" | "auto";
-export type SubagentTaskType = "search" | "synthesis";
+export type SubagentTaskType = "search" | "synthesis" | "routine";
 export type SubagentRunStatus = "running" | "completed" | "failed" | "cancelled";
 export type SubagentMessageChannel = "direct" | "shared" | "decision" | "question";
 

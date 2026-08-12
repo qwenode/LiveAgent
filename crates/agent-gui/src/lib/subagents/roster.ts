@@ -117,6 +117,7 @@ function truncateReminderField(value: string, maxChars = MAX_REMINDER_FIELD_CHAR
 export function buildRosterReminder(params: {
   identities: SubagentIdentity[];
   latestRunsByAgent: Map<string, SubagentRunSummary>;
+  proactiveDelegation?: boolean;
 }) {
   const identities = params.identities.filter(
     (identity) => identity.agentId.trim() && identity.name.trim(),
@@ -152,8 +153,10 @@ export function buildRosterReminder(params: {
     ...agentLines,
     "",
     "If the latest user message is addressed to these existing agents, experts, or the previous team — or asks them to continue, revise, compare, or discuss a follow-up — call Agent again with an `agents` entry per existing id. Do not impersonate those agents from the parent transcript.",
-    "Agent resumes each id's previous private context by default, so put only the new user request and any necessary parent-visible context in each resumed agent's prompt. Do not restate name, role, or identity for an existing id. Set resume=false only when the user asks to replace, rebuild, or start fresh.",
-    "task_type is scoped to the current delegated job and is never inherited from an earlier run. Specify it again on resume only when the new job is explicitly search or synthesis.",
+    "Agent resumes each id's previous private context and execution mode by default, so put only the new user request and any necessary parent-visible context in each resumed agent's prompt. Include mode only when the follow-up needs different access. Do not restate name, role, or identity for an existing id. Set resume=false only when the user asks to replace, rebuild, or start fresh.",
+    params.proactiveDelegation === true
+      ? "task_type is scoped to the current delegated job and is never inherited from an earlier run. Specify it again on resume only when the new job is explicitly search, synthesis, or routine."
+      : "task_type is scoped to the current delegated job and is never inherited from an earlier run. Specify it again on resume only when the new job is explicitly search or synthesis.",
     "For simple parent-level summaries of already returned reports, you may answer directly without calling Agent.",
   ].join("\n");
 }

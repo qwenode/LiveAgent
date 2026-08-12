@@ -101,7 +101,10 @@ function createRegistryHarness() {
   return { loader, runnerCalls, listedServerIds, listedServerCommands };
 }
 
-async function buildRegistry(harness, { withSubagentRuntime, storeIpc } = {}) {
+async function buildRegistry(
+  harness,
+  { withSubagentRuntime, storeIpc, proactiveDelegation } = {},
+) {
   const { loader } = harness;
   const { buildBuiltinToolRegistry } = loader.loadModule("src/lib/tools/builtinRegistry.ts");
   const { createFileToolState } = loader.loadModule("src/lib/tools/fileToolState.ts");
@@ -131,6 +134,8 @@ async function buildRegistry(harness, { withSubagentRuntime, storeIpc } = {}) {
       providerId: "codex",
       model: "gpt-5",
       runtime: { baseUrl: "https://api.example.test/v1", apiKey: "test-key" },
+      proactiveDelegation,
+      maxRounds: 50,
       sessionId: "parent-session",
       templates: [
         {
@@ -217,6 +222,34 @@ test("Agent tool description embeds the hydrated roster and enabled templates", 
     /id=historian name=Historian role=History research mode=readonly status=completed summary=Era catalogued\./,
   );
   assert.match(agentTool.description, /reviewer \(Reviewer\) - Review code paths/);
+  assert.match(agentTool.description, /plus mode only when the follow-up needs different access/);
+});
+
+test("Agent tool exposes routine schema and guidance only in proactive mode", async () => {
+  const harness = createRegistryHarness();
+  const conservativeRegistry = (
+    await buildRegistry(harness, { withSubagentRuntime: true, proactiveDelegation: false })
+  ).registry;
+  const conservativeAgent = conservativeRegistry.tools.find((tool) => tool.name === "Agent");
+  const conservativeSchema = JSON.stringify(conservativeAgent.parameters);
+  assert.match(conservativeSchema, /"const":"search"/);
+  assert.match(conservativeSchema, /"const":"synthesis"/);
+  assert.doesNotMatch(conservativeSchema, /"const":"routine"/);
+  assert.match(conservativeAgent.description, /Omit task_type for implementation, architecture/);
+  assert.doesNotMatch(conservativeAgent.description, /Set task_type=routine/);
+
+  const proactiveRegistry = (
+    await buildRegistry(createRegistryHarness(), {
+      withSubagentRuntime: true,
+      proactiveDelegation: true,
+    })
+  ).registry;
+  const proactiveAgent = proactiveRegistry.tools.find((tool) => tool.name === "Agent");
+  const proactiveSchema = JSON.stringify(proactiveAgent.parameters);
+  assert.match(proactiveSchema, /"const":"routine"/);
+  assert.match(proactiveAgent.description, /Set task_type=routine for bounded day-to-day implementation/);
+  assert.match(proactiveAgent.description, /Omit task_type for architecture, risky or high-stakes decisions/);
+  assert.doesNotMatch(proactiveAgent.description, /Omit task_type for implementation, architecture/);
 });
 
 test("worktree children get fs/shell/ro-memory/MCP tools but no skills, system, or manager tools", async () => {

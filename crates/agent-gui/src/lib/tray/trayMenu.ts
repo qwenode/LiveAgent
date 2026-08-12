@@ -64,6 +64,7 @@ export type TrayMenuModel = {
   newChatAccelerator: string | null;
   tooltip: string | null;
   badgeText: string | null;
+  taskbarBadgeCount: number;
 };
 
 export type BuildTrayMenuModelInput = {
@@ -71,6 +72,7 @@ export type BuildTrayMenuModelInput = {
   theme: Theme;
   conversations: readonly SidebarConversation[];
   runningConversationIds: ReadonlySet<string>;
+  unseenRunResultCount: number;
   workspaceProjects: readonly WorkspaceProject[];
   activeWorkspaceProjectId: string | undefined;
   archivedWorkspaceProjectPaths: readonly string[];
@@ -85,7 +87,7 @@ function withCount(template: string, count: number): string {
 }
 
 /** 快捷键回显：仅启用中的绑定；格式与 muda accelerator 解析兼容。 */
-function enabledAccelerator(action: "summon" | "newChat"): string | null {
+function enabledAccelerator(action: "toggle" | "newChat"): string | null {
   const binding = readGlobalShortcutBindings()[action];
   if (!binding || binding.enabled === false) return null;
   const accelerator = binding.accelerator.trim();
@@ -208,10 +210,13 @@ export function buildTrayMenuModel(input: BuildTrayMenuModelInput): TrayMenuMode
     cron,
     theme: input.theme,
     gatewayEnabled: remoteConfigured,
-    showAccelerator: enabledAccelerator("summon"),
+    showAccelerator: enabledAccelerator("toggle"),
     newChatAccelerator: enabledAccelerator("newChat"),
     tooltip: tooltipParts.join(" · "),
     badgeText: prefs.showRunningBadge && runningCount > 0 ? String(runningCount) : null,
+    taskbarBadgeCount: prefs.showRunningBadge
+      ? Math.max(0, Math.trunc(input.unseenRunResultCount))
+      : 0,
   };
 }
 

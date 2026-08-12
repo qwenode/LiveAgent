@@ -12,6 +12,7 @@ const powerActivityModulePath = path.join(rootDir, "src/lib/system/powerActivity
 const streamQueue = [];
 const streamSideEffects = [];
 const observedStreamContexts = [];
+const observedProviderStreamFinalizations = [];
 const HOSTED_SEARCH_PROBE_HEADER = "x-liveagent-hosted-search-probe";
 
 function createUsage() {
@@ -273,8 +274,9 @@ const llmMock = {
       maxTokens: 4096,
     };
   },
-  finalizeProviderStreamOptions({ options }) {
-    return options;
+  finalizeProviderStreamOptions(args) {
+    observedProviderStreamFinalizations.push(args);
+    return args.options;
   },
   normalizeErrorMessage(value, fallback = "Request failed") {
     return typeof value === "string" && value.trim() ? value.trim() : fallback;
@@ -346,6 +348,7 @@ function resetFakeStreams(...assistants) {
   streamQueue.push(...assistants);
   streamSideEffects.length = 0;
   observedStreamContexts.length = 0;
+  observedProviderStreamFinalizations.length = 0;
 }
 
 function queueStreamSideEffect(sideEffect) {
@@ -436,6 +439,96 @@ test("runAssistantWithTools returns terminal stop messages without scheduling a 
   assert.equal(result.messages.length, 2);
   assert.equal(result.messages[0].role, "user");
   assert.equal(result.messages[1].role, "assistant");
+});
+
+test("runAssistantWithTools steers FIFO messages at the next context boundary and rebaselines emitted output", async () => {
+  const toolCall = createToolCall("call-steer-read", "Read", { path: "src/App.tsx" });
+  const steerMessage = {
+    role: "user",
+    id: "steer-message-1",
+    content: "Please also check the tests.",
+    timestamp: 2,
+  };
+  let registeredHandler;
+  const confirmations = [];
+  resetFakeStreams(createToolUseAssistant(toolCall), createTextAssistant("final answer"));
+  queueStreamSideEffect(() => {
+    assert.ok(registeredHandler);
+    assert.equal(registeredHandler.deliver(steerMessage), true);
+  });
+  const { params } = createBaseParams({
+    activeSteer: {
+      conversationId: "conversation-a",
+      runToken: "run-1",
+      register(_conversationId, handler) {
+        registeredHandler = handler;
+      },
+      clear() {},
+      onMessagesEnteredContext({ messages, emittedMessages }) {
+        confirmations.push({ messages, emittedMessages });
+        return true;
+      },
+    },
+    onBeforeNextTurn: async () => null,
+  });
+
+  const result = await runAssistantWithTools(params);
+
+  assert.equal(confirmations.length, 1);
+  assert.deepEqual(confirmations[0].messages.map((message) => message.id), ["steer-message-1"]);
+  assert.deepEqual(confirmations[0].emittedMessages.map((message) => message.role), [
+    "assistant",
+    "toolResult",
+    "user",
+  ]);
+  assert.deepEqual(result.emittedMessages.map((message) => message.role), ["assistant"]);
+  assert.deepEqual(
+    observedStreamContexts[1].messages
+      .filter((message) => message.role === "user" && message.id)
+      .map((message) => message.id),
+    ["steer-message-1"],
+  );
+});
+
+test("runAssistantWithTools leaves rejected steer delivery unconfirmed", async () => {
+  const steerMessage = {
+    role: "user",
+    id: "rejected-steer-message",
+    content: "Rejected",
+    timestamp: 2,
+  };
+  let registeredHandler;
+  let confirmed = 0;
+  resetFakeStreams(createTextAssistant("done"));
+  queueStreamSideEffect(() => {
+    assert.ok(registeredHandler);
+    assert.equal(registeredHandler.deliver(steerMessage), false);
+  });
+  const { params } = createBaseParams({
+    context: {
+      systemPrompt: "Base system prompt",
+      messages: [steerMessage],
+      tools: [],
+    },
+    tools: [],
+    activeSteer: {
+      conversationId: "conversation-a",
+      runToken: "run-1",
+      register(_conversationId, handler) {
+        registeredHandler = handler;
+      },
+      clear() {},
+      onMessagesEnteredContext() {
+        confirmed += 1;
+        return true;
+      },
+    },
+  });
+
+  const result = await runAssistantWithTools(params);
+
+  assert.equal(confirmed, 0);
+  assert.deepEqual(result.emittedMessages.map((message) => message.id), [undefined]);
 });
 
 test("runAssistantWithTools sends tracked deletion rules with a non-empty base prompt", async () => {
@@ -1064,6 +1157,98 @@ test("runAssistantWithTools applies turn context overrides without duplicating c
   assert.deepEqual(
     result.messages.map((message) => message.role),
     ["user", "assistant"],
+  );
+});
+
+test("runAssistantWithTools keeps a tool-disabled final turn tool-free and bounded", async () => {
+  const initialToolCall = createToolCall("call-initial-read", "Read", {
+    path: "src/App.tsx",
+  });
+  resetFakeStreams(
+    createToolUseAssistant(initialToolCall),
+    createTextAssistant(`Confirmed result.\n<seed:tool_call>\n  <function name="Read">\n    <parameter name="path">src/Secret.tsx</parameter>\n  </function>\n</seed:tool_call>\nUnresolved gap.`),
+  );
+  const finalizeMessage = {
+    role: "user",
+    content: "Summarize now without tools.",
+    timestamp: 10,
+  };
+  const { params, executedToolCalls } = createBaseParams({
+    nativeWebSearch: true,
+    onBeforeNextTurn: async (snapshot) => ({
+      context: {
+        ...snapshot.runtimeContext,
+        systemPrompt: "Final summary instructions",
+        messages: [...snapshot.runtimeContext.messages, finalizeMessage],
+        tools: [],
+      },
+      emittedMessages: [...snapshot.emittedMessages, finalizeMessage],
+      disableTools: true,
+    }),
+  });
+
+  const result = await runAssistantWithTools(params);
+
+  assert.equal(observedStreamContexts.length, 2);
+  assert.deepEqual(observedStreamContexts[1].tools, []);
+  assert.equal(observedStreamContexts[1].systemPrompt, "Final summary instructions");
+  assert.equal(observedStreamContexts[1].systemPrompt.includes("# Tool-Execution Mode"), false);
+  assert.equal(observedProviderStreamFinalizations[1].nativeWebSearch, false);
+  assert.equal(executedToolCalls.length, 1);
+  assert.equal(executedToolCalls[0].id, initialToolCall.id);
+  assert.equal(result.assistant.stopReason, "stop");
+  assert.equal(result.assistant.content.some((block) => block.type === "toolCall"), false);
+  assert.equal(
+    result.assistant.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n")
+      .includes("seed:tool_call"),
+    false,
+  );
+});
+
+test("runAssistantWithTools drops structured tool calls from a tool-disabled final turn", async () => {
+  const initialToolCall = createToolCall("call-initial-read-structured", "Read", {
+    path: "src/App.tsx",
+  });
+  const forbiddenFinalToolCall = createToolCall("call-forbidden-final-read", "Read", {
+    path: "src/Secret.tsx",
+  });
+  resetFakeStreams(
+    createToolUseAssistant(initialToolCall),
+    createAssistant(
+      [{ type: "text", text: "Partial final report." }, forbiddenFinalToolCall],
+      "toolUse",
+    ),
+  );
+  const finalizeMessage = {
+    role: "user",
+    content: "Summarize now without tools.",
+    timestamp: 10,
+  };
+  const { params, executedToolCalls } = createBaseParams({
+    onBeforeNextTurn: async (snapshot) => ({
+      context: {
+        ...snapshot.runtimeContext,
+        systemPrompt: "Final summary instructions",
+        messages: [...snapshot.runtimeContext.messages, finalizeMessage],
+        tools: [],
+      },
+      emittedMessages: [...snapshot.emittedMessages, finalizeMessage],
+      disableTools: true,
+    }),
+  });
+
+  const result = await runAssistantWithTools(params);
+
+  assert.equal(observedStreamContexts.length, 2);
+  assert.equal(executedToolCalls.length, 1);
+  assert.equal(executedToolCalls[0].id, initialToolCall.id);
+  assert.equal(result.assistant.stopReason, "stop");
+  assert.deepEqual(
+    result.assistant.content.map((block) => block.type),
+    ["text"],
   );
 });
 

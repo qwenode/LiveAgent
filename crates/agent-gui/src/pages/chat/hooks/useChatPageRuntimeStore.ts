@@ -1,11 +1,27 @@
-import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef } from "react";
+import type { MentionComposerDraft } from "@liveagent/ui/components/chat/MentionComposer";
+import {
+  type Dispatch,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { CompactionStatus } from "../../../lib/chat/compaction/types";
 import {
   type ConversationViewState,
   createConversationStateFromContext,
 } from "../../../lib/chat/conversation/conversationState";
 import type { ConversationPersistenceCursor } from "../../../lib/chat/history/chatHistory";
-import type { SelectedModel } from "../../../lib/settings";
+import type {
+  PendingUploadedFile,
+  UploadedUserMessage,
+} from "../../../lib/chat/messages/uploadedFiles";
+import type {
+  ChatRuntimeControls,
+  ExecutionMode,
+  SelectedModel,
+} from "../../../lib/settings";
 import {
   type ConversationRuntimeEntry,
   createConversationRuntimeEntry,
@@ -20,6 +36,22 @@ type ConversationIdentity = {
 
 type RuntimeEntryFallback = Partial<ConversationRuntimeEntry> &
   Pick<ConversationRuntimeEntry, "state" | "sessionId" | "createdAt">;
+
+export type ConversationAgentSteerHandler = {
+  runToken: string;
+  deliver: (message: UploadedUserMessage) => boolean;
+};
+
+export type ConversationDirectHandoff = {
+  text: string;
+  uploadedFiles: PendingUploadedFile[];
+  userMessage: UploadedUserMessage;
+  executionMode: ExecutionMode;
+  workdir: string;
+  runtimeControls: ChatRuntimeControls;
+  restoreDraft: MentionComposerDraft | null;
+  restoreUploadedFiles: PendingUploadedFile[];
+};
 
 type UseChatPageRuntimeStoreParams = {
   initialConversation: ConversationIdentity;
@@ -89,6 +121,15 @@ export function useChatPageRuntimeStore(params: UseChatPageRuntimeStoreParams) {
   const conversationStopHandlersRef = useRef(
     new Map<string, (options: { force: boolean; requestVersion: number }) => void>(),
   );
+  const conversationAgentSteerHandlersRef = useRef(
+    new Map<string, ConversationAgentSteerHandler>(),
+  );
+  const conversationDirectHandoffsRef = useRef(
+    new Map<string, ConversationDirectHandoff | null>(),
+  );
+  const [directHandoffConversationIds, setDirectHandoffConversationIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
 
   const buildRuntimeEntryFromVisibleState = useCallback(
     (): ConversationRuntimeEntry =>
@@ -287,6 +328,101 @@ export function useChatPageRuntimeStore(params: UseChatPageRuntimeStoreParams) {
     [],
   );
 
+  const setConversationAgentSteerHandler = useCallback(
+    (conversationId: string, handler: ConversationAgentSteerHandler) => {
+      const key = conversationId.trim();
+      const runToken = handler.runToken.trim();
+      if (!key || !runToken) return false;
+      conversationAgentSteerHandlersRef.current.set(key, { ...handler, runToken });
+      return true;
+    },
+    [],
+  );
+
+  const getConversationAgentSteerHandler = useCallback((conversationId: string) => {
+    return conversationAgentSteerHandlersRef.current.get(conversationId.trim()) ?? null;
+  }, []);
+
+  const clearConversationAgentSteerHandler = useCallback(
+    (conversationId: string, runToken: string) => {
+      const key = conversationId.trim();
+      const current = conversationAgentSteerHandlersRef.current.get(key);
+      if (!current || current.runToken !== runToken.trim()) return false;
+      conversationAgentSteerHandlersRef.current.delete(key);
+      return true;
+    },
+    [],
+  );
+
+  const deliverConversationAgentSteer = useCallback(
+    (conversationId: string, runToken: string, message: UploadedUserMessage) => {
+      const handler = conversationAgentSteerHandlersRef.current.get(conversationId.trim());
+      if (!handler || handler.runToken !== runToken.trim()) return false;
+      return handler.deliver(message);
+    },
+    [],
+  );
+
+  const reserveConversationDirectHandoff = useCallback((conversationId: string) => {
+    const key = conversationId.trim();
+    if (!key || conversationDirectHandoffsRef.current.has(key)) return false;
+    conversationDirectHandoffsRef.current.set(key, null);
+    setDirectHandoffConversationIds((current) => {
+      if (current.has(key)) return current;
+      const next = new Set(current);
+      next.add(key);
+      return next;
+    });
+    return true;
+  }, []);
+
+  const setConversationDirectHandoff = useCallback(
+    (conversationId: string, handoff: ConversationDirectHandoff) => {
+      const key = conversationId.trim();
+      if (!key || conversationDirectHandoffsRef.current.get(key) !== null) return false;
+      conversationDirectHandoffsRef.current.set(key, handoff);
+      return true;
+    },
+    [],
+  );
+
+  const getConversationDirectHandoff = useCallback((conversationId: string) => {
+    return conversationDirectHandoffsRef.current.get(conversationId.trim()) ?? null;
+  }, []);
+
+  const takeConversationDirectHandoff = useCallback((conversationId: string) => {
+    const key = conversationId.trim();
+    const handoff = conversationDirectHandoffsRef.current.get(key) ?? null;
+    if (!handoff) return null;
+    conversationDirectHandoffsRef.current.delete(key);
+    setDirectHandoffConversationIds((current) => {
+      if (!current.has(key)) return current;
+      const next = new Set(current);
+      next.delete(key);
+      return next;
+    });
+    return handoff;
+  }, []);
+
+  const clearConversationDirectHandoff = useCallback((conversationId: string) => {
+    const key = conversationId.trim();
+    const cleared = conversationDirectHandoffsRef.current.delete(key);
+    if (cleared) {
+      setDirectHandoffConversationIds((current) => {
+        if (!current.has(key)) return current;
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
+    }
+    return cleared;
+  }, []);
+
+  const isConversationDirectHandoffPending = useCallback(
+    (conversationId: string) => directHandoffConversationIds.has(conversationId.trim()),
+    [directHandoffConversationIds],
+  );
+
   const setConversationSendingState = useCallback(
     (conversationId: string, value: boolean) => {
       updateConversationRuntimeEntry(conversationId, (prev) => ({
@@ -353,6 +489,8 @@ export function useChatPageRuntimeStore(params: UseChatPageRuntimeStoreParams) {
       conversationStopRequestsRef.current.clear();
       conversationStopRequestVersionsRef.current.clear();
       conversationStopHandlersRef.current.clear();
+      conversationAgentSteerHandlersRef.current.clear();
+      conversationDirectHandoffsRef.current.clear();
     },
     [],
   );
@@ -376,6 +514,17 @@ export function useChatPageRuntimeStore(params: UseChatPageRuntimeStoreParams) {
     setConversationStopHandler,
     clearConversationStopHandler,
     requestActiveConversationStop,
+    setConversationAgentSteerHandler,
+    getConversationAgentSteerHandler,
+    clearConversationAgentSteerHandler,
+    deliverConversationAgentSteer,
+    reserveConversationDirectHandoff,
+    setConversationDirectHandoff,
+    getConversationDirectHandoff,
+    takeConversationDirectHandoff,
+    clearConversationDirectHandoff,
+    isConversationDirectHandoffPending,
+    directHandoffConversationIds,
     setConversationSendingState,
   };
 }

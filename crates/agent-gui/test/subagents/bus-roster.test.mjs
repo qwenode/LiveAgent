@@ -212,7 +212,17 @@ test("buildRosterReminder lists agents with latest-run fields and truncates long
   assert.ok(/last_task=[^\n]*\.\.\./.test(reminder));
   assert.ok(/last_summary=[^\n]*\.\.\./.test(reminder));
   assert.match(reminder, /call Agent again with an `agents` entry per existing id/);
+  assert.match(reminder, /execution mode by default/);
+  assert.match(reminder, /Include mode only when the follow-up needs different access/);
   assert.match(reminder, /task_type is scoped to the current delegated job and is never inherited/);
+  assert.match(reminder, /explicitly search or synthesis/);
+
+  const proactiveReminder = roster.buildRosterReminder({
+    identities,
+    latestRunsByAgent,
+    proactiveDelegation: true,
+  });
+  assert.match(proactiveReminder, /explicitly search, synthesis, or routine/);
 });
 
 test("buildRosterReminder omits entries beyond the cap with an omitted-count line", () => {

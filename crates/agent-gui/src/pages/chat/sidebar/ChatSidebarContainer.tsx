@@ -13,6 +13,7 @@ import {
   selectListState,
   selectProjectActivityInputs,
   selectRunningConversationIds,
+  selectUnseenRunResults,
   selectWorkspaceFeeds,
   sidebarShallowEqual,
 } from "@liveagent/ui/lib/sidebar/selectors";
@@ -69,6 +70,8 @@ type ChatSidebarContainerProps = {
   onRemoveProject: (project: WorkspaceProject) => void;
   onArchiveProject: (project: WorkspaceProject) => void;
   onUnarchiveProject: (project: WorkspaceProject) => void;
+  onArchiveProjectTasks: (project: WorkspaceProject) => void;
+  onCleanupProjectTasks: (project: WorkspaceProject) => void;
   archivedProjectPathKeys?: ReadonlySet<string>;
   onNewConversation: () => void;
   onSelectConversation: (id: string) => void;
@@ -106,6 +109,7 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
   const listState = useSidebarSelector(store, selectListState, sidebarShallowEqual);
   const scopeKey = useSidebarSelector(store, (snapshot) => snapshot.scopeKey);
   const runningConversationIds = useSidebarSelector(store, selectRunningConversationIds);
+  const unseenRunResults = useSidebarSelector(store, selectUnseenRunResults);
   const busyConversationIds = useSidebarSelector(store, selectMutations);
   const mutationErrors = useSidebarSelector(store, selectMutationErrors);
   const projectActivityInputs = useSidebarSelector(
@@ -315,6 +319,7 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
       workspaceFeeds={workspaceFeeds}
       currentConversationId={props.currentConversationId}
       runningConversationIds={runningConversationIds}
+      unseenRunResults={unseenRunResults}
       busyConversationIds={busyConversationIds}
       listStatus={listState.status}
       scopeKey={scopeKey}
@@ -334,6 +339,7 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
       activeProjectId={props.activeProjectId}
       missingProjectPathKeys={props.missingProjectPathKeys}
       runningProjectPathKeys={projectActivityInputs.runningWorkdirPathKeys}
+      unseenProjectOutcomes={projectActivityInputs.unseenWorkdirOutcomes}
       projectRenamingId={props.projectRenamingId}
       projectRenameDraft={props.projectRenameDraft}
       projectsCollapsed={props.projectsCollapsed}
@@ -360,6 +366,8 @@ export function ChatSidebarContainer(props: ChatSidebarContainerProps) {
       onRemoveProject={props.onRemoveProject}
       onArchiveProject={props.onArchiveProject}
       onUnarchiveProject={props.onUnarchiveProject}
+      onArchiveProjectTasks={props.onArchiveProjectTasks}
+      onCleanupProjectTasks={props.onCleanupProjectTasks}
       archivedProjectPathKeys={props.archivedProjectPathKeys}
       onNewConversation={props.onNewConversation}
       onSelectConversation={props.onSelectConversation}

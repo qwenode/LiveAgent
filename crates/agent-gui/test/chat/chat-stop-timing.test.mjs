@@ -172,6 +172,87 @@ test("a stop intent aborts a controller and handler registered later", () => {
   hookHarness.cleanup();
 });
 
+test("Agent steer handlers reject mismatched run tokens and old-run cleanup", () => {
+  const hookHarness = createHookHarness();
+  const loader = createTsModuleLoader({
+    mocks: {
+      react: hookHarness.react,
+      "../../../lib/chat/conversation/conversationState": {
+        createConversationStateFromContext(value) {
+          return value;
+        },
+      },
+      "../runtime/chatPageRuntime": {
+        createConversationRuntimeEntry(value) {
+          return {
+            compactionStatus: "idle",
+            isSending: false,
+            errorMessage: null,
+            hookWarning: null,
+            workdir: "",
+            selectedModel: undefined,
+            ...value,
+          };
+        },
+        setConversationRuntimeCacheEntry(cache, key, value) {
+          cache.set(key, value);
+        },
+      },
+    },
+  });
+  const { useChatPageRuntimeStore } = loader.loadModule(
+    "src/pages/chat/hooks/useChatPageRuntimeStore.ts",
+  );
+  const state = { meta: { tools: [] }, messages: [] };
+  const noop = () => undefined;
+  const runtime = hookHarness.render(() =>
+    useChatPageRuntimeStore({
+      initialConversation: {
+        conversationId: "conversation-1",
+        sessionId: "session-1",
+        createdAt: 1,
+      },
+      initialConversationState: state,
+      currentConversationId: "conversation-1",
+      conversationState: state,
+      compactionStatus: "idle",
+      isSending: false,
+      errorMessage: null,
+      hookWarning: null,
+      currentConversationSessionId: "session-1",
+      currentConversationCreatedAt: 1,
+      currentConversationSelectedModel: undefined,
+      setConversationState: noop,
+      setCompactionStatus: noop,
+      setIsSending: noop,
+      setErrorMessage: noop,
+      setHookWarning: noop,
+      setCurrentConversationSessionId: noop,
+      setCurrentConversationCreatedAt: noop,
+      setCurrentConversationSelectedModel: noop,
+      setRunningConversationIds: noop,
+    }),
+  );
+  const delivered = [];
+  const message = { role: "user", id: "steer-1", content: "next", timestamp: 1 };
+
+  runtime.setConversationAgentSteerHandler("conversation-1", {
+    runToken: "run-new",
+    deliver(value) {
+      delivered.push(value.id);
+      return true;
+    },
+  });
+
+  assert.equal(runtime.deliverConversationAgentSteer("conversation-1", "run-old", message), false);
+  assert.equal(runtime.clearConversationAgentSteerHandler("conversation-1", "run-old"), false);
+  assert.equal(runtime.deliverConversationAgentSteer("conversation-1", "run-new", message), true);
+  assert.deepEqual(delivered, ["steer-1"]);
+  assert.equal(runtime.clearConversationAgentSteerHandler("conversation-1", "run-new"), true);
+  assert.equal(runtime.getConversationAgentSteerHandler("conversation-1"), null);
+  hookHarness.cleanup();
+});
+
 test("a direct queue stop pauses processing until composer Stop resumes it", async () => {
   const hookHarness = createHookHarness();
   const sendGate = deferred();
@@ -308,9 +389,9 @@ test("a direct queue stop pauses processing until composer Stop resumes it", asy
     }),
   );
 
-  assert.equal(queue.enqueueCurrentComposerTurn("end"), true);
+  assert.equal(await queue.enqueueCurrentComposerTurn("end"), true);
   draftText = "second queued turn";
-  assert.equal(queue.enqueueCurrentComposerTurn("end"), true);
+  assert.equal(await queue.enqueueCurrentComposerTurn("end"), true);
   queue.requestQueuedChatTurnProcessing("conversation-1");
   await flushPromises();
   assert.equal(sendCalls.length, 1);

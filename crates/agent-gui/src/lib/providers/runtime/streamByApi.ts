@@ -132,7 +132,11 @@ export function streamSimpleByApi(model: Model<any>, context: Context, options: 
             ? wrapDeepSeekDsmlToolCallStream(stream)
             : stream;
         },
-        { signal: anthropicOptions.signal, ...anthropicOptions.streamRetry },
+        {
+          signal: anthropicOptions.signal,
+          ...anthropicOptions.streamRetry,
+          model: { api: model.api, provider: model.provider, id: model.id },
+        },
       );
     }
     case "openai-completions": {
@@ -171,7 +175,11 @@ export function streamSimpleByApi(model: Model<any>, context: Context, options: 
             ? recoverOpenAICompletionsMissingFinishReason(source)
             : source;
         },
-        { signal: openAICompletionsOptions.signal, ...openAICompletionsOptions.streamRetry },
+        {
+          signal: openAICompletionsOptions.signal,
+          ...openAICompletionsOptions.streamRetry,
+          model: { api: model.api, provider: model.provider, id: model.id },
+        },
       );
     }
     case "openai-responses": {
@@ -182,6 +190,7 @@ export function streamSimpleByApi(model: Model<any>, context: Context, options: 
       return withStreamRetry(() => streamOpenAIResponses(model as any, context, openAIOptions), {
         signal: options.signal,
         ...options.streamRetry,
+        model: { api: model.api, provider: model.provider, id: model.id },
       });
     }
     case "google-generative-ai": {
@@ -200,6 +209,7 @@ export function streamSimpleByApi(model: Model<any>, context: Context, options: 
       return withStreamRetry(() => streamGoogle(model as any, context, googleOptions), {
         signal: options.signal,
         ...options.streamRetry,
+        model: { api: model.api, provider: model.provider, id: model.id },
       });
     }
     default:
