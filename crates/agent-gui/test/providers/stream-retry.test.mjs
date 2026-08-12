@@ -176,6 +176,57 @@ test("withStreamRetry retries an OpenAI Responses stream that ends without a ter
   assert.equal(final.content[0].text, "recovered answer");
 });
 
+test("withStreamRetry retries an upstream stream_error without a provider message", async () => {
+  let calls = 0;
+  const retryErrorMessages = [];
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      if (calls === 1) return createErrorStream("stream_error: no message");
+      return createSuccessStream("recovered from upstream stream error");
+    },
+    {
+      maxAttempts: 2,
+      onRetry: (_attempt, _maxAttempts, errorMessage) => retryErrorMessages.push(errorMessage),
+    },
+  );
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 2);
+  assert.deepEqual(retryErrorMessages, ["stream_error: no message"]);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["start", "text_delta", "done"],
+  );
+  const final = await wrapped.result();
+  assert.equal(final.stopReason, "stop");
+  assert.equal(final.content[0].text, "recovered from upstream stream error");
+});
+
+test("withStreamRetry retries the generic terminal-less upstream wording", async () => {
+  let calls = 0;
+  const wrapped = withStreamRetry(
+    () => {
+      calls += 1;
+      if (calls === 1) {
+        return createErrorStream("stream ended without terminal event or completed response");
+      }
+      return createSuccessStream("recovered from terminal-less stream");
+    },
+    { maxAttempts: 2 },
+  );
+
+  const events = await collectEvents(wrapped);
+  assert.equal(calls, 2);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["start", "text_delta", "done"],
+  );
+  const final = await wrapped.result();
+  assert.equal(final.stopReason, "stop");
+  assert.equal(final.content[0].text, "recovered from terminal-less stream");
+});
+
 test("withStreamRetry retries a clean empty response before content commits", async () => {
   let calls = 0;
   const retryErrorMessages = [];

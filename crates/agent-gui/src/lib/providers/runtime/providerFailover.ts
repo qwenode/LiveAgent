@@ -5,7 +5,7 @@ import {
   createAssistantMessageEventStream,
   isRetryableAssistantError,
 } from "@earendil-works/pi-ai";
-import { isEmptyAssistantResponseError } from "./streamRetry";
+import { isEmptyAssistantResponseError, isRetryablePrematureStreamEndError } from "./streamRetry";
 
 /**
  * Provider auto-failover runtime (cc-switch inspired).
@@ -188,6 +188,7 @@ export function isFailoverEligibleAssistantError(message: AssistantMessage | und
   const errorMessage = (message as { errorMessage?: string }).errorMessage ?? "";
   if (FAILOVER_INELIGIBLE_ERROR_PATTERN.test(errorMessage)) return false;
   if (isEmptyAssistantResponseError(errorMessage)) return true;
+  if (isRetryablePrematureStreamEndError(errorMessage)) return true;
   if (isRetryableAssistantError(message)) return true;
   return FAILOVER_EXTRA_ELIGIBLE_ERROR_PATTERN.test(errorMessage);
 }

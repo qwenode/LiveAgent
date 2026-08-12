@@ -143,6 +143,13 @@ test("transient provider errors are failover-eligible", () => {
   assert.equal(isFailoverEligibleAssistantError(makeErrorMessage("503 Service Unavailable")), true);
   assert.equal(isFailoverEligibleAssistantError(makeErrorMessage("connection refused")), true);
   assert.equal(isFailoverEligibleAssistantError(makeErrorMessage("Request timed out")), true);
+  assert.equal(isFailoverEligibleAssistantError(makeErrorMessage("stream_error: no message")), true);
+  assert.equal(
+    isFailoverEligibleAssistantError(
+      makeErrorMessage("stream ended without terminal event or completed response"),
+    ),
+    true,
+  );
 });
 
 test("quota and auth errors fail over even though same-provider retry would not", () => {

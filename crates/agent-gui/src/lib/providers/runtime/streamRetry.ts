@@ -49,10 +49,22 @@ function isCommittingEvent(event: AssistantMessageEvent): boolean {
 }
 
 // A terminal-less EOF is a transport truncation, not a semantic provider error.
-// pi-ai currently misses the OpenAI Responses wording; keep the pre-commit guard
-// in withStreamRetry as the safety boundary against duplicated output/tool calls.
-const RETRYABLE_PREMATURE_STREAM_END_ERROR_PATTERN =
-  /OpenAI Responses stream ended before a terminal response event/i;
+// Some relays collapse the useful EOF detail into `stream_error: no message`, so
+// recognize both the generic stream error code and known SDK terminal-less text.
+// The pre-commit guard in withStreamRetry remains the safety boundary against
+// duplicated output/tool calls.
+const RETRYABLE_PREMATURE_STREAM_END_ERROR_PATTERN = new RegExp(
+  [
+    "\\bstream_error\\b",
+    "OpenAI Responses stream ended before a terminal response event",
+    "stream ended without (?:a )?terminal event(?: or completed response)?",
+  ].join("|"),
+  "i",
+);
+
+export function isRetryablePrematureStreamEndError(errorMessage: string | undefined): boolean {
+  return RETRYABLE_PREMATURE_STREAM_END_ERROR_PATTERN.test(errorMessage ?? "");
+}
 
 function isTerminalEvent(event: AssistantMessageEvent): event is TerminalEvent {
   return event.type === "done" || event.type === "error";
@@ -92,8 +104,7 @@ function isRetryableStreamError(event: TerminalEvent): boolean {
   const message = terminalMessage(event);
   return (
     isRetryableAssistantError(message) ||
-    (message.stopReason === "error" &&
-      RETRYABLE_PREMATURE_STREAM_END_ERROR_PATTERN.test(message.errorMessage ?? ""))
+    (message.stopReason === "error" && isRetryablePrematureStreamEndError(message.errorMessage))
   );
 }
 
