@@ -220,6 +220,10 @@ fn search_chat_history_message_plain(
             CAST(message_updated_at AS INTEGER)
         FROM chatHistoryMessageFts
         WHERE (body LIKE ?1 ESCAPE '\\' OR title LIKE ?1 ESCAPE '\\')
+          AND EXISTS (
+            SELECT 1 FROM chatHistory h
+            WHERE h.id = chatHistoryMessageFts.conversation_id AND h.is_archived = 0
+          )
           AND (?2 IS NULL OR CAST({time_column} AS INTEGER) >= ?2)
           AND (?3 IS NULL OR CAST({time_column} AS INTEGER) < ?3)
         LIMIT ?4
@@ -280,6 +284,10 @@ fn search_chat_history_segment_plain(
             CAST(segment_updated_at AS INTEGER)
         FROM chatHistorySegmentFts
         WHERE (body LIKE ?1 ESCAPE '\\' OR title LIKE ?1 ESCAPE '\\')
+          AND EXISTS (
+            SELECT 1 FROM chatHistory h
+            WHERE h.id = chatHistorySegmentFts.conversation_id AND h.is_archived = 0
+          )
           AND (?2 IS NULL OR CAST({time_column} AS INTEGER) >= ?2)
           AND (?3 IS NULL OR CAST({time_column} AS INTEGER) < ?3)
         LIMIT ?4
@@ -371,7 +379,11 @@ fn search_chat_history_time_window(
             body,
             CAST(segment_updated_at AS INTEGER)
         FROM chatHistorySegmentFts
-        WHERE (?1 IS NULL OR CAST({time_column} AS INTEGER) >= ?1)
+        WHERE EXISTS (
+            SELECT 1 FROM chatHistory h
+            WHERE h.id = chatHistorySegmentFts.conversation_id AND h.is_archived = 0
+          )
+          AND (?1 IS NULL OR CAST({time_column} AS INTEGER) >= ?1)
           AND (?2 IS NULL OR CAST({time_column} AS INTEGER) < ?2)
         ORDER BY CAST({time_column} AS INTEGER) DESC, conversation_id ASC, segment_index ASC
         LIMIT ?3
@@ -430,6 +442,10 @@ fn search_chat_history_message_fts(
             CAST(message_updated_at AS INTEGER)
         FROM chatHistoryMessageFts
         WHERE chatHistoryMessageFts MATCH ?1
+          AND EXISTS (
+            SELECT 1 FROM chatHistory h
+            WHERE h.id = chatHistoryMessageFts.conversation_id AND h.is_archived = 0
+          )
           AND (?2 IS NULL OR CAST({time_column} AS INTEGER) >= ?2)
           AND (?3 IS NULL OR CAST({time_column} AS INTEGER) < ?3)
         LIMIT ?4
@@ -493,6 +509,10 @@ fn search_chat_history_segment_fts(
             CAST(segment_updated_at AS INTEGER)
         FROM chatHistorySegmentFts
         WHERE chatHistorySegmentFts MATCH ?1
+          AND EXISTS (
+            SELECT 1 FROM chatHistory h
+            WHERE h.id = chatHistorySegmentFts.conversation_id AND h.is_archived = 0
+          )
           AND (?2 IS NULL OR CAST({time_column} AS INTEGER) >= ?2)
           AND (?3 IS NULL OR CAST({time_column} AS INTEGER) < ?3)
         LIMIT ?4

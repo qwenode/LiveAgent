@@ -508,6 +508,7 @@ mod tests {
             ChatHistoryListFilter {
                 cwd: Some("/tmp/project-a".to_string()),
                 cwd_empty: false,
+                include_archived: false,
             },
         )
         .expect("list project cwd history");
@@ -521,6 +522,7 @@ mod tests {
             ChatHistoryListFilter {
                 cwd: None,
                 cwd_empty: true,
+                include_archived: false,
             },
         )
         .expect("list empty cwd history");
@@ -2861,6 +2863,165 @@ mod tests {
         assert_eq!(
             kept[1].summary_json.as_deref(),
             Some(r#"{"role":"summary","id":"summary-1","content":"older"}"#)
+        );
+    }
+
+    #[test]
+    fn archive_by_cwd_hides_tasks_from_normal_lists() {
+        let mut conn = open_test_db().expect("open test db");
+        let mut project_a = sample_conversation();
+        project_a.id = "archive-a".to_string();
+        project_a.cwd = Some(" /tmp/archive-project ".to_string());
+        let mut project_b = sample_conversation();
+        project_b.id = "archive-b".to_string();
+        project_b.cwd = Some("/tmp/other-project".to_string());
+        upsert_chat_history_header(&conn, &project_a).expect("upsert archive project task");
+        upsert_chat_history_header(&conn, &project_b).expect("upsert other project task");
+        upsert_single_segment(
+            &conn,
+            &project_a.id,
+            &ChatHistorySegmentInput {
+                segment_index: 0,
+                segment_id: "archive-segment".to_string(),
+                summary_json: None,
+                messages_json: r#"[{"id":"archive-message","role":"user","content":"archived search marker","timestamp":1700000000001}]"#.to_string(),
+                message_count: 1,
+                start_message_id: Some("archive-message".to_string()),
+                end_message_id: Some("archive-message".to_string()),
+                created_at: 1_700_000_000_000,
+                updated_at: 1_700_000_000_001,
+            },
+        )
+        .expect("index archive project task");
+        conn.execute(
+            "INSERT INTO chatHistoryShare (conversation_id, token, enabled, redact_tool_content, created_at, updated_at) VALUES (?1, ?2, 1, 0, 1, 1)",
+            params![project_a.id.as_str(), "archive-share-token"],
+        )
+        .expect("share archive project task");
+
+        let archived = archive_chat_history_by_cwd_sync(
+            &mut conn,
+            "/tmp/archive-project",
+            1_700_000_123_456,
+        )
+        .expect("archive project tasks");
+        assert_eq!(archived.conversation_ids, vec!["archive-a".to_string()]);
+        assert_eq!(archived.affected_count, 1);
+
+        let normal = list_chat_history_sync_with_filter(
+            &conn,
+            1,
+            20,
+            ChatHistoryListFilter {
+                cwd: Some("/tmp/archive-project".to_string()),
+                cwd_empty: false,
+                include_archived: false,
+            },
+        )
+        .expect("list normal project tasks");
+        assert_eq!(normal.total_count, 0);
+
+        let including_archived = list_chat_history_sync_with_filter(
+            &conn,
+            1,
+            20,
+            ChatHistoryListFilter {
+                cwd: Some("/tmp/archive-project".to_string()),
+                cwd_empty: false,
+                include_archived: true,
+            },
+        )
+        .expect("list project tasks including archived");
+        assert_eq!(including_archived.total_count, 1);
+        assert!(including_archived.items[0].is_archived);
+        assert_eq!(including_archived.items[0].archived_at, Some(1_700_000_123_456));
+
+        let shared = list_shared_chat_history_sync(&conn, 1, 20).expect("list shared history");
+        assert!(
+            shared.items.iter().all(|item| item.id != project_a.id),
+            "archived tasks must be hidden from shared history"
+        );
+        let search_matches = search_chat_history_fts(
+            &conn,
+            "archived search marker",
+            8,
+            &default_history_search_filter(),
+        )
+        .expect("search archived project task");
+        assert!(
+            search_matches
+                .iter()
+                .all(|item| item.conversation_id != project_a.id),
+            "archived tasks must be hidden from ordinary history search: {:?}",
+            search_matches
+        );
+        assert!(
+            resolve_chat_history_share_sync(&conn, "archive-share-token").is_err(),
+            "archived tasks must not resolve through direct share tokens"
+        );
+
+        let workdirs = list_chat_history_workdirs_sync(&conn).expect("list active workdirs");
+        assert_eq!(workdirs.workdirs.len(), 1);
+        assert_eq!(workdirs.workdirs[0].path, "/tmp/other-project");
+    }
+
+    #[test]
+    fn cleanup_by_cwd_deletes_archived_and_strictly_older_than_three_days() {
+        let mut conn = open_test_db().expect("open test db");
+        let stale_before = 1_700_100_000_000_i64;
+        let mut archived = sample_conversation();
+        archived.id = "cleanup-archived".to_string();
+        archived.cwd = Some("/tmp/cleanup-project".to_string());
+        archived.updated_at = stale_before + 10_000;
+        let mut stale = sample_conversation();
+        stale.id = "cleanup-stale".to_string();
+        stale.cwd = Some(" /tmp/cleanup-project ".to_string());
+        stale.updated_at = stale_before - 1;
+        let mut boundary = sample_conversation();
+        boundary.id = "cleanup-boundary".to_string();
+        boundary.cwd = Some("/tmp/cleanup-project".to_string());
+        boundary.updated_at = stale_before;
+        let mut other = sample_conversation();
+        other.id = "cleanup-other".to_string();
+        other.cwd = Some("/tmp/other-project".to_string());
+        other.updated_at = stale_before - 1;
+        for conversation in [&archived, &stale, &boundary, &other] {
+            upsert_chat_history_header(&conn, conversation).expect("upsert cleanup task");
+        }
+        archive_chat_history_by_cwd_sync(
+            &mut conn,
+            "/tmp/cleanup-project",
+            stale_before + 20_000,
+        )
+        .expect("archive cleanup project tasks");
+        conn.execute(
+            "UPDATE chatHistory SET is_archived = 0, archived_at = NULL WHERE id IN ('cleanup-stale', 'cleanup-boundary')",
+            [],
+        )
+        .expect("restore unarchived cleanup fixtures");
+
+        let (result, _prune) = cleanup_chat_history_by_cwd_sync(
+            &mut conn,
+            "/tmp/cleanup-project",
+            stale_before,
+        )
+        .expect("cleanup project tasks");
+        assert_eq!(result.affected_count, 2);
+        assert_eq!(
+            result.conversation_ids,
+            vec!["cleanup-stale".to_string(), "cleanup-archived".to_string()]
+        );
+
+        let remaining = conn
+            .prepare("SELECT id FROM chatHistory ORDER BY id ASC")
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .expect("load remaining cleanup tasks");
+        assert_eq!(
+            remaining,
+            vec!["cleanup-boundary".to_string(), "cleanup-other".to_string()]
         );
     }
 }

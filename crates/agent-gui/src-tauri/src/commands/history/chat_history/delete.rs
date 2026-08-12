@@ -1,5 +1,5 @@
-fn delete_chat_history_sync(
-    conn: &mut Connection,
+fn delete_chat_history_in_transaction(
+    conn: &Connection,
     id: &str,
 ) -> Result<subagent_store::SubagentPruneResult, String> {
     let chat_id = id.trim().to_string();
@@ -20,22 +20,30 @@ fn delete_chat_history_sync(
         return Err("未找到对应的历史对话".to_string());
     }
 
-    let tx = conn
-        .transaction()
-        .map_err(|e| format!("开启删除历史事务失败：{e}"))?;
     let subagent_prune_result =
-        subagent_store::delete_subagent_history_for_parent_conversation(&tx, chat_id.as_str())?;
-    delete_chat_history_conversation_fts(&tx, chat_id.as_str())?;
-    tx.execute(
+        subagent_store::delete_subagent_history_for_parent_conversation(conn, chat_id.as_str())?;
+    delete_chat_history_conversation_fts(conn, chat_id.as_str())?;
+    conn.execute(
         "DELETE FROM chatHistorySegment WHERE conversation_id = ?1",
         params![chat_id.as_str()],
     )
     .map_err(|e| format!("删除历史分段失败：{e}"))?;
-    tx.execute(
+    conn.execute(
         "DELETE FROM chatHistory WHERE id = ?1",
         params![chat_id.as_str()],
     )
     .map_err(|e| format!("删除历史对话失败：{e}"))?;
+    Ok(subagent_prune_result)
+}
+
+fn delete_chat_history_sync(
+    conn: &mut Connection,
+    id: &str,
+) -> Result<subagent_store::SubagentPruneResult, String> {
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("开启删除历史事务失败：{e}"))?;
+    let subagent_prune_result = delete_chat_history_in_transaction(&tx, id)?;
     tx.commit()
         .map_err(|e| format!("提交删除历史事务失败：{e}"))?;
     Ok(subagent_prune_result)

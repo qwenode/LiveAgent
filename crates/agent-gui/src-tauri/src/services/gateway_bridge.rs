@@ -161,6 +161,7 @@ pub async fn handle_history_list(
         i64::from(page_size),
         cwd,
         Some(request.cwd_empty),
+        Some(request.include_archived),
     )
     .await?;
     Ok(build_proto_history_list_response(page))
@@ -186,6 +187,8 @@ fn build_proto_history_list_response(
             selected_model_json: item.selected_model_json.unwrap_or_default(),
             is_pinned: item.is_pinned,
             pinned_at: item.pinned_at.unwrap_or_default(),
+            is_archived: item.is_archived,
+            archived_at: item.archived_at.unwrap_or_default(),
             is_shared: item.is_shared,
         })
         .collect();
@@ -402,6 +405,26 @@ pub async fn handle_history_delete(
 ) -> Result<proto::HistoryDeleteResponse, String> {
     chat_history::chat_history_delete_inner(request.conversation_id).await?;
     Ok(proto::HistoryDeleteResponse {})
+}
+
+pub async fn handle_history_archive_cwd(
+    request: proto::HistoryArchiveCwdRequest,
+) -> Result<proto::HistoryArchiveCwdResponse, String> {
+    let result = chat_history::chat_history_archive_cwd_inner(request.cwd).await?;
+    Ok(proto::HistoryArchiveCwdResponse {
+        conversation_ids: result.conversation_ids,
+        affected_count: i32::try_from(result.affected_count).unwrap_or(i32::MAX),
+    })
+}
+
+pub async fn handle_history_cleanup_cwd(
+    request: proto::HistoryCleanupCwdRequest,
+) -> Result<proto::HistoryCleanupCwdResponse, String> {
+    let result = chat_history::chat_history_cleanup_cwd_inner(request.cwd).await?;
+    Ok(proto::HistoryCleanupCwdResponse {
+        conversation_ids: result.conversation_ids,
+        affected_count: i32::try_from(result.affected_count).unwrap_or(i32::MAX),
+    })
 }
 
 pub async fn handle_provider_list() -> Result<proto::ProviderListResponse, String> {
@@ -1346,6 +1369,8 @@ fn build_proto_conversation_summary_from_record(
         selected_model_json: record.selected_model_json.clone().unwrap_or_default(),
         is_pinned: record.is_pinned,
         pinned_at: record.pinned_at.unwrap_or_default(),
+        is_archived: record.is_archived,
+        archived_at: record.archived_at.unwrap_or_default(),
         is_shared: record.is_shared,
     }
 }
@@ -1366,6 +1391,8 @@ fn build_proto_conversation_summary(
         selected_model_json: summary.selected_model_json.unwrap_or_default(),
         is_pinned: summary.is_pinned,
         pinned_at: summary.pinned_at.unwrap_or_default(),
+        is_archived: summary.is_archived,
+        archived_at: summary.archived_at.unwrap_or_default(),
         is_shared: summary.is_shared,
     }
 }

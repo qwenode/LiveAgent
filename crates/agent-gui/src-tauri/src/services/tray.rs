@@ -17,6 +17,8 @@ use serde::Deserialize;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIcon;
 use tauri::AppHandle;
+#[cfg(target_os = "windows")]
+use tauri::Manager;
 
 // ---- 静态菜单项 ID（lib.rs 动作总线按这些 ID 解析）----
 pub const TRAY_STATUS_ID: &str = "tray-status";
@@ -103,12 +105,14 @@ pub struct TrayMenuModel {
     pub theme: String,
     /// 远程网关行是否可点（未配置远程时禁用）。
     pub gateway_enabled: bool,
-    /// summon / newChat 全局快捷键回显（muda accelerator 格式，仅显示不注册）。
+    /// toggle / newChat 全局快捷键回显（muda accelerator 格式，仅显示不注册）。
     pub show_accelerator: Option<String>,
     pub new_chat_accelerator: Option<String>,
     pub tooltip: Option<String>,
     /// macOS 状态栏文字徽标（如「2」）；None 清除。其他平台忽略。
     pub badge_text: Option<String>,
+    /// Windows 任务栏覆盖图标中的未查看完成数；0 清除。其他平台忽略。
+    pub taskbar_badge_count: u32,
 }
 
 /// 固定骨架的全部句柄。菜单项句柄是主线程代理（Send+Sync），
@@ -171,7 +175,7 @@ pub fn build_tray_menu_skeleton(
         false,
         None::<&str>,
     )?;
-    let show = MenuItem::with_id(app, TRAY_SHOW_ID, "显示主窗口", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, TRAY_SHOW_ID, "显示 / 隐藏主窗口", true, None::<&str>)?;
     let new_chat = MenuItem::with_id(app, TRAY_NEW_CHAT_ID, "新建对话", true, None::<&str>)?;
     let pin = CheckMenuItem::with_id(app, TRAY_PIN_ID, "窗口置顶", true, false, None::<&str>)?;
     let recent = Submenu::with_id(app, TRAY_RECENT_MENU_ID, "最近对话", false)?;
@@ -454,8 +458,117 @@ pub fn apply_tray_menu(
             eprintln!("failed to set tray title badge: {error}");
         }
     }
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(error) = set_windows_taskbar_badge(app, model.taskbar_badge_count) {
+            eprintln!("failed to set Windows taskbar badge: {error}");
+        }
+    }
 
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn set_windows_taskbar_badge(app: &AppHandle, count: u32) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main webview window not found".to_string())?;
+    let icon = (count > 0).then(|| render_windows_taskbar_badge(count));
+    window
+        .set_overlay_icon(icon)
+        .map_err(|error| format!("taskbar overlay update failed: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn render_windows_taskbar_badge(count: u32) -> tauri::image::Image<'static> {
+    const SIZE: u32 = 32;
+    const GLYPH_WIDTH: i32 = 3;
+    const GLYPH_HEIGHT: i32 = 5;
+    const GLYPH_GAP: i32 = 1;
+    const RED: [u8; 4] = [220, 38, 38, 255];
+    const WHITE: [u8; 4] = [255, 255, 255, 255];
+
+    let mut rgba = vec![0; (SIZE * SIZE * 4) as usize];
+    let center = (SIZE as f32 - 1.0) / 2.0;
+    let radius = center - 1.5;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as f32 - center;
+            let dy = y as f32 - center;
+            if dx * dx + dy * dy <= radius * radius {
+                set_badge_pixel(&mut rgba, SIZE, x as i32, y as i32, RED);
+            }
+        }
+    }
+
+    let label = if count > 99 {
+        "99+".to_string()
+    } else {
+        count.to_string()
+    };
+    let glyphs: Vec<[u8; GLYPH_HEIGHT as usize]> =
+        label.chars().filter_map(windows_badge_glyph).collect();
+    let scale = match glyphs.len() {
+        0 | 1 => 4,
+        2 => 3,
+        _ => 2,
+    };
+    let label_width = glyphs.len() as i32 * GLYPH_WIDTH * scale
+        + (glyphs.len().saturating_sub(1) as i32 * GLYPH_GAP * scale);
+    let start_x = (SIZE as i32 - label_width) / 2;
+    let start_y = (SIZE as i32 - GLYPH_HEIGHT * scale) / 2;
+
+    for (glyph_index, glyph) in glyphs.iter().enumerate() {
+        let glyph_x = start_x + glyph_index as i32 * (GLYPH_WIDTH + GLYPH_GAP) * scale;
+        for (row, bits) in glyph.iter().enumerate() {
+            for column in 0..GLYPH_WIDTH {
+                let mask = 1_u8 << (GLYPH_WIDTH - 1 - column) as u32;
+                if *bits & mask == 0 {
+                    continue;
+                }
+                for offset_y in 0..scale {
+                    for offset_x in 0..scale {
+                        set_badge_pixel(
+                            &mut rgba,
+                            SIZE,
+                            glyph_x + column * scale + offset_x,
+                            start_y + row as i32 * scale + offset_y,
+                            WHITE,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    tauri::image::Image::new_owned(rgba, SIZE, SIZE)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_badge_glyph(value: char) -> Option<[u8; 5]> {
+    match value {
+        '0' => Some([0b111, 0b101, 0b101, 0b101, 0b111]),
+        '1' => Some([0b010, 0b110, 0b010, 0b010, 0b111]),
+        '2' => Some([0b111, 0b001, 0b111, 0b100, 0b111]),
+        '3' => Some([0b111, 0b001, 0b111, 0b001, 0b111]),
+        '4' => Some([0b101, 0b101, 0b111, 0b001, 0b001]),
+        '5' => Some([0b111, 0b100, 0b111, 0b001, 0b111]),
+        '6' => Some([0b111, 0b100, 0b111, 0b101, 0b111]),
+        '7' => Some([0b111, 0b001, 0b010, 0b010, 0b010]),
+        '8' => Some([0b111, 0b101, 0b111, 0b101, 0b111]),
+        '9' => Some([0b111, 0b101, 0b111, 0b001, 0b111]),
+        '+' => Some([0b000, 0b010, 0b111, 0b010, 0b000]),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn set_badge_pixel(rgba: &mut [u8], width: u32, x: i32, y: i32, color: [u8; 4]) {
+    if x < 0 || y < 0 || x >= width as i32 || y >= width as i32 {
+        return;
+    }
+    let offset = ((y as u32 * width + x as u32) * 4) as usize;
+    rgba[offset..offset + 4].copy_from_slice(&color);
 }
 
 fn compose_status_line(app_version: &str, status_suffix: Option<&str>) -> String {
@@ -661,7 +774,8 @@ mod tests {
             "gatewayEnabled": true,
             "newChatAccelerator": "Ctrl+Shift+KeyN",
             "tooltip": "LiveAgent · 空闲",
-            "badgeText": null
+            "badgeText": null,
+            "taskbarBadgeCount": 3
         }))
         .expect("model should deserialize");
 
@@ -678,6 +792,7 @@ mod tests {
             Some("Ctrl+Shift+KeyN")
         );
         assert!(model.badge_text.is_none());
+        assert_eq!(model.taskbar_badge_count, 3);
         // 缺省字段回退默认。
         assert!(model.labels.show.is_empty());
         assert!(model.show_accelerator.is_none());

@@ -496,6 +496,78 @@ impl GatewayController {
                 });
                 Ok(())
             }
+            Some(proto::gateway_envelope::Payload::HistoryArchiveCwd(request)) => {
+                let controller = Arc::clone(self);
+                tauri::async_runtime::spawn(async move {
+                    let result = match gateway_bridge::handle_history_archive_cwd(request).await {
+                        Ok(response) => {
+                            for conversation_id in &response.conversation_ids {
+                                controller
+                                    .publish_history_sync(build_history_sync_delete(
+                                        conversation_id.clone(),
+                                    ))
+                                    .await;
+                            }
+                            controller
+                                .send_agent_envelope(proto::AgentEnvelope {
+                                    request_id: request_id.clone(),
+                                    timestamp: now_unix_seconds(),
+                                    payload: Some(
+                                        proto::agent_envelope::Payload::HistoryArchiveCwdResp(
+                                            response,
+                                        ),
+                                    ),
+                                })
+                                .await
+                        }
+                        Err(error) => {
+                            controller
+                                .send_error_response(request_id.clone(), 500, error)
+                                .await
+                        }
+                    };
+                    if let Err(err) = result {
+                        eprintln!("gateway history.archive_cwd handler failed: {err}");
+                    }
+                });
+                Ok(())
+            }
+            Some(proto::gateway_envelope::Payload::HistoryCleanupCwd(request)) => {
+                let controller = Arc::clone(self);
+                tauri::async_runtime::spawn(async move {
+                    let result = match gateway_bridge::handle_history_cleanup_cwd(request).await {
+                        Ok(response) => {
+                            for conversation_id in &response.conversation_ids {
+                                controller
+                                    .publish_history_sync(build_history_sync_delete(
+                                        conversation_id.clone(),
+                                    ))
+                                    .await;
+                            }
+                            controller
+                                .send_agent_envelope(proto::AgentEnvelope {
+                                    request_id: request_id.clone(),
+                                    timestamp: now_unix_seconds(),
+                                    payload: Some(
+                                        proto::agent_envelope::Payload::HistoryCleanupCwdResp(
+                                            response,
+                                        ),
+                                    ),
+                                })
+                                .await
+                        }
+                        Err(error) => {
+                            controller
+                                .send_error_response(request_id.clone(), 500, error)
+                                .await
+                        }
+                    };
+                    if let Err(err) = result {
+                        eprintln!("gateway history.cleanup_cwd handler failed: {err}");
+                    }
+                });
+                Ok(())
+            }
             Some(proto::gateway_envelope::Payload::HistoryDelete(request)) => {
                 let deleted_conversation_id = request.conversation_id.trim().to_string();
                 let controller = Arc::clone(self);

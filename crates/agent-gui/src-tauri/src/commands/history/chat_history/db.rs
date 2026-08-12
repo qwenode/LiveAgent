@@ -49,7 +49,8 @@ fn load_stale_chat_history_fts_segments(
         LEFT JOIN chatHistoryFtsSegmentIndex f
           ON f.conversation_id = s.conversation_id
          AND f.segment_index = s.segment_index
-        WHERE (f.conversation_id IS NULL
+        WHERE h.is_archived = 0
+          AND (f.conversation_id IS NULL
            OR f.segment_updated_at != s.updated_at
            OR f.conversation_updated_at != h.updated_at)
           AND (?1 IS NULL OR CAST({time_column} AS INTEGER) >= ?1)

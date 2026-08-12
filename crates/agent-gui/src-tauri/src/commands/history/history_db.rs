@@ -2,7 +2,7 @@ use rusqlite::{Connection, OptionalExtension};
 use std::{collections::HashSet, fs, path::PathBuf, sync::Mutex, time::Duration};
 
 const DB_FILENAME: &str = "chat-history.sqlite3";
-const HISTORY_DB_SCHEMA_VERSION: i64 = 3;
+const HISTORY_DB_SCHEMA_VERSION: i64 = 4;
 
 static HISTORY_DB_MIGRATION_LOCK: Mutex<()> = Mutex::new(());
 
@@ -93,6 +93,11 @@ fn migrate_history_db_inner(conn: &Connection) -> Result<(), String> {
         set_user_version(conn, 3)?;
     }
 
+    if current_version < 4 {
+        migrate_to_v4(conn)?;
+        set_user_version(conn, 4)?;
+    }
+
     // The subagent schema is versioned independently via subagentMeta and is
     // safe to (re)ensure on every startup.
     ensure_subagent_schema(conn)?;
@@ -129,6 +134,14 @@ fn migrate_to_v3(conn: &Connection) -> Result<(), String> {
         ",
     )
     .map_err(|e| format!("创建工作空间历史索引失败：{e}"))?;
+    Ok(())
+}
+
+// v4: conversations can be soft-archived independently from their workspace.
+// Normal sidebar/workdir queries exclude archived rows; maintenance commands
+// query them explicitly for project-scoped cleanup.
+fn migrate_to_v4(conn: &Connection) -> Result<(), String> {
+    ensure_chat_history_schema(conn)?;
     Ok(())
 }
 
@@ -201,6 +214,8 @@ fn ensure_chat_history_schema(conn: &Connection) -> Result<(), String> {
             updated_at INTEGER NOT NULL,
             is_pinned INTEGER NOT NULL DEFAULT 0,
             pinned_at INTEGER,
+            is_archived INTEGER NOT NULL DEFAULT 0,
+            archived_at INTEGER,
             selected_model_json TEXT
         );
 
@@ -244,6 +259,13 @@ fn ensure_chat_history_schema(conn: &Connection) -> Result<(), String> {
             ON chatHistorySegment(conversation_id, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_chatHistory_pinned
             ON chatHistory(is_pinned DESC, pinned_at DESC, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_chatHistory_cwd_archived
+            ON chatHistory(
+                TRIM(COALESCE(cwd, '')),
+                is_archived,
+                updated_at DESC,
+                id ASC
+            );
         CREATE INDEX IF NOT EXISTS idx_chatHistoryShare_token
             ON chatHistoryShare(token);
         ",
@@ -310,6 +332,14 @@ fn ensure_chat_history_columns(conn: &Connection) -> Result<(), String> {
                 "ALTER TABLE chatHistory ADD COLUMN pinned_at INTEGER;",
             ),
             (
+                "is_archived",
+                "ALTER TABLE chatHistory ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "archived_at",
+                "ALTER TABLE chatHistory ADD COLUMN archived_at INTEGER;",
+            ),
+            (
                 "selected_model_json",
                 "ALTER TABLE chatHistory ADD COLUMN selected_model_json TEXT;",
             ),
@@ -357,6 +387,10 @@ fn ensure_chat_history_columns(conn: &Connection) -> Result<(), String> {
         UPDATE chatHistory
         SET is_pinned = 0
         WHERE is_pinned IS NULL;
+
+        UPDATE chatHistory
+        SET is_archived = 0
+        WHERE is_archived IS NULL;
         ",
     )
     .map_err(|e| format!("修复聊天历史主表默认字段失败：{e}"))?;
@@ -815,6 +849,43 @@ mod tests {
             )
             .expect("query workspace feed index existence");
         assert_eq!(exists, 1);
+        assert_eq!(
+            read_user_version(&conn).expect("read version"),
+            HISTORY_DB_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn v3_database_gains_archive_columns_and_index_via_v4_migration() {
+        let conn = Connection::open_in_memory().expect("open v3 in-memory history db");
+        conn.execute_batch(
+            "
+            CREATE TABLE chatHistory (
+                id TEXT PRIMARY KEY,
+                cwd TEXT,
+                updated_at INTEGER NOT NULL,
+                is_pinned INTEGER NOT NULL DEFAULT 0,
+                pinned_at INTEGER
+            );
+            PRAGMA user_version = 3;
+            ",
+        )
+        .expect("create v3 history schema");
+
+        initialize_connection(&conn).expect("migrate v3 history schema");
+
+        let columns = read_table_columns(&conn, "chatHistory", "chatHistory")
+            .expect("read migrated history columns");
+        assert!(columns.contains("is_archived"));
+        assert!(columns.contains("archived_at"));
+        let index_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_chatHistory_cwd_archived'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query archive index existence");
+        assert_eq!(index_exists, 1);
         assert_eq!(
             read_user_version(&conn).expect("read version"),
             HISTORY_DB_SCHEMA_VERSION

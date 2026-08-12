@@ -42,6 +42,8 @@ macro_rules! app_invoke_handler {
         tauri::generate_handler![
             // Chat history
             commands::chat_history::chat_history_list,
+            commands::chat_history::chat_history_archive_cwd,
+            commands::chat_history::chat_history_cleanup_cwd,
             commands::chat_history::chat_history_workdirs,
             commands::chat_history::chat_history_shared_list,
             commands::chat_history::chat_history_search,
@@ -340,7 +342,6 @@ fn toggle_main_window_pin(app: &tauri::AppHandle) {
 /// 经 [`APP_ACTION_EVENT`] 转发（部分动作先呼出主窗口）。
 #[derive(Debug, Clone)]
 enum AppAction {
-    Summon,
     ToggleWindow,
     TogglePin,
     NewChat,
@@ -386,7 +387,7 @@ struct AppActionFeedbackEvent {
 fn tray_menu_action(id: &str) -> Option<AppAction> {
     use services::tray as tray_ids;
     match id {
-        tray_ids::TRAY_SHOW_ID => Some(AppAction::Summon),
+        tray_ids::TRAY_SHOW_ID => Some(AppAction::ToggleWindow),
         tray_ids::TRAY_NEW_CHAT_ID => Some(AppAction::NewChat),
         tray_ids::TRAY_PIN_ID => Some(AppAction::TogglePin),
         tray_ids::TRAY_RECENT_VIEW_ALL_ID => Some(AppAction::ViewAllConversations),
@@ -436,11 +437,6 @@ fn forward_app_action(
 
 fn dispatch_app_action(app: &tauri::AppHandle, action: AppAction) {
     match action {
-        AppAction::Summon => {
-            if let Err(error) = show_main_window(app) {
-                eprintln!("failed to show LiveAgent window: {error}");
-            }
-        }
         AppAction::ToggleWindow => toggle_main_window(app),
         AppAction::TogglePin => toggle_main_window_pin(app),
         AppAction::NewChat => forward_app_action(app, "new-chat", None, None, true),
@@ -529,8 +525,8 @@ fn handle_global_shortcut(
         return;
     };
     let action = match action.as_str() {
-        "summon" => AppAction::Summon,
-        "toggle" => AppAction::ToggleWindow,
+        // 兼容旧前端残留的 summon 动作；合并后统一执行显示/隐藏切换。
+        "summon" | "toggle" => AppAction::ToggleWindow,
         "newChat" => AppAction::NewChat,
         "pin" => AppAction::TogglePin,
         _ => return,

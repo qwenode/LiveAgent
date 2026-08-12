@@ -4,6 +4,7 @@ pub async fn chat_history_list(
     page_size: i64,
     cwd: Option<String>,
     cwd_empty: Option<bool>,
+    include_archived: Option<bool>,
 ) -> Result<ChatHistoryListResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let conn = open_db()?;
@@ -14,6 +15,7 @@ pub async fn chat_history_list(
             ChatHistoryListFilter {
                 cwd,
                 cwd_empty: cwd_empty.unwrap_or(false),
+                include_archived: include_archived.unwrap_or(false),
             },
         )
     })

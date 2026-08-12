@@ -210,9 +210,10 @@ fn resolve_chat_history_share_sync(
     let conversation_id = conn
         .query_row(
             "
-            SELECT conversation_id
-            FROM chatHistoryShare
-            WHERE token = ?1 AND enabled = 1
+            SELECT share.conversation_id
+            FROM chatHistoryShare share
+            JOIN chatHistory h ON h.id = share.conversation_id
+            WHERE share.token = ?1 AND share.enabled = 1 AND h.is_archived = 0
             ",
             params![share_token],
             |row| row.get::<_, String>(0),

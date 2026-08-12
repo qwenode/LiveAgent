@@ -21,6 +21,8 @@ pub fn build_history_sync_upsert(summary: &ChatHistorySummary) -> GatewayHistory
             message_count: summary.message_count,
             is_pinned: summary.is_pinned,
             pinned_at: summary.pinned_at,
+            is_archived: summary.is_archived,
+            archived_at: summary.archived_at,
             is_shared: summary.is_shared,
         }),
     }
@@ -56,6 +58,8 @@ pub(crate) fn build_history_sync_upsert_from_proto(
             message_count: i64::from(summary.message_count),
             is_pinned: summary.is_pinned,
             pinned_at: (summary.pinned_at > 0).then_some(summary.pinned_at),
+            is_archived: summary.is_archived,
+            archived_at: (summary.archived_at > 0).then_some(summary.archived_at),
             is_shared: summary.is_shared,
         }),
     }
@@ -94,6 +98,8 @@ pub(crate) fn build_history_sync_envelope(
             selected_model_json: conversation.selected_model_json.unwrap_or_default(),
             is_pinned: conversation.is_pinned,
             pinned_at: conversation.pinned_at.unwrap_or_default(),
+            is_archived: conversation.is_archived,
+            archived_at: conversation.archived_at.unwrap_or_default(),
             is_shared: conversation.is_shared,
         });
 

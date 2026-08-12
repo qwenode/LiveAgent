@@ -161,6 +161,8 @@ pub struct GatewayHistorySyncConversation {
     pub message_count: i64,
     pub is_pinned: bool,
     pub pinned_at: Option<i64>,
+    pub is_archived: bool,
+    pub archived_at: Option<i64>,
     pub is_shared: bool,
 }
 

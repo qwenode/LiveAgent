@@ -30,6 +30,7 @@ const MAX_HISTORY_LIST_LIMIT: i64 = 200;
 include!("types.rs");
 include!("db.rs");
 include!("repository.rs");
+include!("maintenance.rs");
 include!("message_ref.rs");
 include!("fts.rs");
 include!("segments.rs");

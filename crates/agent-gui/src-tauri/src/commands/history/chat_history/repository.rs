@@ -12,6 +12,8 @@ fn row_to_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatHistorySummar
         updated_at: row.get("updated_at")?,
         is_pinned: row.get::<_, i64>("is_pinned")? != 0,
         pinned_at: row.get("pinned_at")?,
+        is_archived: row.get::<_, i64>("is_archived")? != 0,
+        archived_at: row.get("archived_at")?,
         is_shared: row.get::<_, i64>("is_shared")? != 0,
     })
 }
@@ -34,6 +36,8 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatHistoryRecord>
         updated_at: row.get("updated_at")?,
         is_pinned: row.get::<_, i64>("is_pinned")? != 0,
         pinned_at: row.get("pinned_at")?,
+        is_archived: row.get::<_, i64>("is_archived")? != 0,
+        archived_at: row.get("archived_at")?,
         is_shared: row.get::<_, i64>("is_shared")? != 0,
         redact_tool_content: row.get::<_, i64>("redact_tool_content")? != 0,
     })
@@ -69,6 +73,8 @@ fn get_summary_by_id(conn: &Connection, id: &str) -> Result<ChatHistorySummary, 
             h.updated_at AS updated_at,
             h.is_pinned AS is_pinned,
             h.pinned_at AS pinned_at,
+            h.is_archived AS is_archived,
+            h.archived_at AS archived_at,
             CASE
                 WHEN share.enabled = 1 AND share.token IS NOT NULL THEN 1
                 ELSE 0
@@ -109,6 +115,8 @@ fn get_record_by_id(conn: &Connection, id: &str) -> Result<ChatHistoryRecord, St
             h.updated_at AS updated_at,
             h.is_pinned AS is_pinned,
             h.pinned_at AS pinned_at,
+            h.is_archived AS is_archived,
+            h.archived_at AS archived_at,
             CASE
                 WHEN share.enabled = 1 AND share.token IS NOT NULL THEN 1
                 ELSE 0
@@ -180,12 +188,21 @@ pub(crate) fn list_chat_history_sync_with_filter(
             .map(|cwd| cwd.trim().to_string())
             .filter(|cwd| !cwd.is_empty())
     };
-    let where_clause = if filter.cwd_empty {
-        "WHERE TRIM(COALESCE(h.cwd, '')) = ''"
+    let cwd_clause = if filter.cwd_empty {
+        Some("TRIM(COALESCE(h.cwd, '')) = ''")
     } else if cwd_filter.is_some() {
-        "WHERE TRIM(COALESCE(h.cwd, '')) = ?1"
+        Some("TRIM(COALESCE(h.cwd, '')) = ?1")
     } else {
-        ""
+        None
+    };
+    let archived_clause = (!filter.include_archived).then_some("h.is_archived = 0");
+    let where_clause = match (cwd_clause, archived_clause) {
+        (Some(cwd_clause), Some(archived_clause)) => {
+            format!("WHERE {cwd_clause} AND {archived_clause}")
+        }
+        (Some(cwd_clause), None) => format!("WHERE {cwd_clause}"),
+        (None, Some(archived_clause)) => format!("WHERE {archived_clause}"),
+        (None, None) => String::new(),
     };
     let total_query = format!("SELECT COUNT(*) FROM chatHistory h {where_clause}");
     let total = if let Some(cwd) = cwd_filter.as_deref() {
@@ -211,6 +228,8 @@ pub(crate) fn list_chat_history_sync_with_filter(
                 h.updated_at AS updated_at,
                 h.is_pinned AS is_pinned,
                 h.pinned_at AS pinned_at,
+                h.is_archived AS is_archived,
+                h.archived_at AS archived_at,
                 CASE
                     WHEN share.enabled = 1 AND share.token IS NOT NULL THEN 1
                     ELSE 0
@@ -260,6 +279,7 @@ pub(crate) fn list_chat_history_workdirs_sync(
                 MAX(updated_at) AS updated_at
             FROM chatHistory
             WHERE TRIM(COALESCE(cwd, '')) != ''
+              AND is_archived = 0
             GROUP BY TRIM(COALESCE(cwd, ''))
             ORDER BY MAX(updated_at) DESC, TRIM(COALESCE(cwd, '')) ASC
             ",
@@ -301,6 +321,7 @@ pub(crate) fn list_shared_chat_history_sync(
             FROM chatHistory h
             INNER JOIN chatHistoryShare share ON share.conversation_id = h.id
             WHERE share.enabled = 1 AND share.token IS NOT NULL
+              AND h.is_archived = 0
             ",
             [],
             |row| row.get::<_, i64>(0),
@@ -323,10 +344,13 @@ pub(crate) fn list_shared_chat_history_sync(
                 h.updated_at AS updated_at,
                 h.is_pinned AS is_pinned,
                 h.pinned_at AS pinned_at,
+                h.is_archived AS is_archived,
+                h.archived_at AS archived_at,
                 1 AS is_shared
             FROM chatHistory h
             INNER JOIN chatHistoryShare share ON share.conversation_id = h.id
             WHERE share.enabled = 1 AND share.token IS NOT NULL
+              AND h.is_archived = 0
             ORDER BY h.is_pinned DESC, h.pinned_at DESC, h.updated_at DESC, h.id ASC
             LIMIT ?1 OFFSET ?2
             ",

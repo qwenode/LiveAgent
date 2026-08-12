@@ -13,6 +13,8 @@ pub struct ChatHistorySummary {
     pub updated_at: i64,
     pub is_pinned: bool,
     pub pinned_at: Option<i64>,
+    pub is_archived: bool,
+    pub archived_at: Option<i64>,
     pub is_shared: bool,
 }
 
@@ -27,6 +29,7 @@ pub struct ChatHistoryListResponse {
 pub(crate) struct ChatHistoryListFilter {
     pub cwd: Option<String>,
     pub cwd_empty: bool,
+    pub include_archived: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,6 +44,13 @@ pub struct ChatHistoryWorkdirSummary {
 #[serde(rename_all = "camelCase")]
 pub struct ChatHistoryWorkdirsResponse {
     pub workdirs: Vec<ChatHistoryWorkdirSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatHistoryProjectMutationResult {
+    pub conversation_ids: Vec<String>,
+    pub affected_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -76,6 +86,8 @@ pub struct ChatHistoryRecord {
     pub updated_at: i64,
     pub is_pinned: bool,
     pub pinned_at: Option<i64>,
+    pub is_archived: bool,
+    pub archived_at: Option<i64>,
     pub is_shared: bool,
     pub redact_tool_content: bool,
 }
