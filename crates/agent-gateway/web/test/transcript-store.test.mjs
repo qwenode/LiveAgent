@@ -11,6 +11,7 @@ const loader = createWebModuleLoader({
 const { createTranscriptStore } = loader.loadModule(
   "src/lib/chat/transcript/transcriptStore.ts",
 );
+const { parseHistoryMessagesJson } = loader.loadModule("src/lib/chatUi.ts");
 
 function runStarted(runId, seq, extra = {}) {
   return { type: "run_started", conversation_id: "conv-1", run_id: runId, seq, ...extra };
@@ -20,8 +21,8 @@ function runFinished(runId, seq, status = "completed", extra = {}) {
   return { type: "run_finished", conversation_id: "conv-1", run_id: runId, seq, status, ...extra };
 }
 
-function token(runId, seq, text) {
-  return { type: "token", conversation_id: "conv-1", run_id: runId, seq, text };
+function token(runId, seq, text, extra = {}) {
+  return { type: "token", conversation_id: "conv-1", run_id: runId, seq, text, ...extra };
 }
 
 function runContentSnapshot(runId, seq, revision, entries, extra = {}) {
@@ -2364,4 +2365,70 @@ test("ref-bearing replay converges regardless of history/replay arrival order", 
     ["v3"],
     "replay-first converges to the final version",
   );
+});
+
+test("manual compaction checkpoint stays a single card after the next exchange history merge", () => {
+  const historyEntries = parseHistoryMessagesJson(
+    JSON.stringify([
+      {
+        role: "summary",
+        id: "sum-1",
+        content: "summary body",
+        timestamp: 1000,
+        summaryMeta: {
+          coveredMessageCount: 4,
+          generatedBy: { providerId: "anthropic", model: "claude", promptVersion: "v1" },
+          stats: { sourceMessageCount: 4, contextTokensAfter: 1234 },
+        },
+      },
+      { role: "user", id: "user-2", content: "next prompt", timestamp: 2000 },
+      { role: "assistant", content: "reply", timestamp: 3000 },
+    ]),
+  );
+
+  for (const mode of ["enrich", "replace"]) {
+    const store = createTranscriptStore();
+    store.applyEvent(runStarted("run-compact", 1));
+    store.applyEvent(
+      token("run-compact", 2, "summary body", {
+        provider: "liveagent",
+        model: "summary",
+        api: "liveagent-compaction",
+        checkpoint: {
+          summaryId: "sum-1",
+          segmentIndex: 1,
+          coveredMessageCount: 4,
+          timestamp: 1000,
+          generatedBy: { providerId: "anthropic", model: "claude", promptVersion: "v1" },
+          contextUsageTokens: 1234,
+        },
+      }),
+    );
+    store.applyEvent(
+      runFinished("run-compact", 3, "completed", {
+        content_complete: false,
+        history_required: true,
+        entries_json: "[]",
+      }),
+    );
+    store.flush();
+    assert.equal(
+      allRows(store.getSnapshot()).filter((row) => row.kind === "checkpoint").length,
+      1,
+      `${mode}: one checkpoint card immediately after compaction`,
+    );
+
+    store.applyEvent(runStarted("run-2", 4));
+    store.applyEvent(userMessage("run-2", 5, "next prompt", { message_id: "user-2" }));
+    store.applyEvent(token("run-2", 6, "reply"));
+    store.applyEvent(runFinished("run-2", 7));
+    store.flush();
+
+    store.applyHistorySnapshot(historyEntries, { mode });
+    store.flush();
+    const checkpoints = allRows(store.getSnapshot()).filter((row) => row.kind === "checkpoint");
+    assert.equal(checkpoints.length, 1, `${mode}: duplicate checkpoint cards`);
+    assert.equal(checkpoints[0].key, "checkpoint-sum-1", `${mode}: stable content-identity key`);
+    assertUniqueKeys(store.getSnapshot());
+  }
 });
