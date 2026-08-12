@@ -10,6 +10,10 @@ const WINDOWS_DRIVE_PATH_PATTERN = /^[a-zA-Z]:[\\/]/;
 const WINDOWS_UNC_PATH_PATTERN = /^(?:\\\\|\/\/)/;
 const FILE_URL_PATTERN = /^file:\/\//i;
 const ABSOLUTE_POSIX_PATH_PATTERN = /^\//;
+// Home-anchored paths resolve on the conversation host and are expanded by the host.
+const HOME_ANCHORED_PATH_PATTERN = /^~(?:\/|$)/;
+// Markdown/file URLs may encode a Windows drive as /D:/...; normalize it first.
+const URL_STYLE_DRIVE_PATH_PATTERN = /^\/([a-zA-Z]:\/)/;
 const URI_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
 const LOCATION_FRAGMENT_PATTERN = /^#L([1-9]\d*)(?:-L?([1-9]\d*))?$/i;
 const LOCATION_SUFFIX_PATTERN = /:([1-9]\d*)(?::([1-9]\d*))?$/;
@@ -40,7 +44,8 @@ function isAbsolutePath(path: string) {
   return (
     WINDOWS_DRIVE_PATH_PATTERN.test(path) ||
     WINDOWS_UNC_PATH_PATTERN.test(path) ||
-    ABSOLUTE_POSIX_PATH_PATTERN.test(path)
+    ABSOLUTE_POSIX_PATH_PATTERN.test(path) ||
+    HOME_ANCHORED_PATH_PATTERN.test(path)
   );
 }
 
@@ -137,7 +142,7 @@ export function parseChatFileLink(raw: string): ChatFileLink | null {
   }
 
   const { path, line, endLine, column } = parseTrailingLocation(input);
-  const normalized = normalizePath(path);
+  const normalized = normalizePath(path).replace(URL_STYLE_DRIVE_PATH_PATTERN, "$1");
 
   if (isAbsolutePath(normalized)) {
     return createChatFileLink(normalized, "absolute", { line, endLine, column });
@@ -177,7 +182,7 @@ export function decodeChatFileLinkPayload(payload: string): ChatFileLink | null 
   if (!path || (source !== "absolute" && source !== "relative" && source !== "file-url"))
     return null;
 
-  const normalized = normalizePath(path);
+  const normalized = normalizePath(path).replace(URL_STYLE_DRIVE_PATH_PATTERN, "$1");
   const sourceMatches =
     source === "relative"
       ? isSafeRelativePath(normalized) && !isAbsolutePath(normalized)

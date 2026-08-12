@@ -167,6 +167,12 @@ const EXECUTABLE_EXTENSIONS: &[&str] = &[
     "xpi",
 ];
 
+// Archives are not safe to edit or preview in-app; reveal them in the host file manager.
+const ARCHIVE_EXTENSIONS: &[&str] = &[
+    "7z", "bz2", "cab", "gz", "iso", "lz4", "lzma", "rar", "tar", "tbz2", "tgz", "txz", "xz",
+    "zip", "zst",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatFileLinkErrorCode {
@@ -382,7 +388,12 @@ fn build_chat_file_link_plan(
         ));
     }
 
-    let raw_target = PathBuf::from(path.trim());
+    // Absolute/file-url links may use a home anchor; relative links keep a literal
+    // leading "~" so a workspace entry named "~" remains addressable.
+    let raw_target = match source {
+        "absolute" | "file-url" => expand_tilde_path(path.trim()),
+        _ => PathBuf::from(path.trim()),
+    };
     let candidate = match source {
         "relative" if !raw_target.is_absolute() => conversation_workdir.join(raw_target),
         "absolute" | "file-url" if raw_target.is_absolute() => raw_target,
@@ -475,7 +486,7 @@ fn build_chat_file_link_plan(
         "editor"
     } else if has_extension(&target, PREVIEW_EXTENSIONS) {
         "preview"
-    } else if executable {
+    } else if executable || has_extension(&target, ARCHIVE_EXTENSIONS) {
         "revealed"
     } else if is_probably_text(&target) {
         "editor"
@@ -739,6 +750,60 @@ mod tests {
         );
 
         fs::remove_dir_all(root).expect("remove temp workspace");
+    }
+
+    #[test]
+    fn archive_files_reveal_in_the_file_manager_instead_of_failing_closed() {
+        let root = temp_workspace();
+        for name in ["release.zip", "backup.tar", "export.7z", "logs.tgz"] {
+            fs::write(root.join(name), [0x50_u8, 0x4b, 0x03, 0x04]).expect("write archive");
+            let planned = plan(&root, name, "relative");
+            assert_eq!(planned.response.action, "revealed", "{name}");
+            assert_eq!(planned.system_mode, Some("reveal"), "{name}");
+        }
+        fs::remove_dir_all(root).expect("remove temp workspace");
+    }
+
+    #[test]
+    fn home_anchored_absolute_links_expand_but_relative_tilde_stays_literal() {
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let home_dir = home.join(format!("liveagent-chat-file-links-home-{suffix}"));
+        if fs::create_dir_all(&home_dir).is_err() {
+            return;
+        }
+        fs::write(home_dir.join("notes.md"), "# home\n").expect("write home file");
+        let root = temp_workspace();
+        let planned = build_chat_file_link_plan(
+            "conversation-test",
+            &root.to_string_lossy(),
+            &format!(
+                "~/{}/notes.md",
+                home_dir.file_name().expect("home name").to_string_lossy()
+            ),
+            "absolute",
+            None,
+            None,
+            None,
+            false,
+        )
+        .expect("home-anchored link must resolve");
+        assert_eq!(planned.response.action, "editor");
+        assert!(planned.response.outside_workspace);
+
+        fs::create_dir(root.join("~")).expect("create literal tilde dir");
+        fs::write(root.join("~/inner.md"), "# inner\n").expect("write literal tilde file");
+        let relative = plan(&root, "~/inner.md", "relative");
+        assert_eq!(relative.response.action, "editor");
+        assert!(!relative.response.outside_workspace);
+
+        fs::remove_dir_all(root).expect("remove temp workspace");
+        fs::remove_dir_all(home_dir).expect("remove home dir");
     }
 
     #[test]
