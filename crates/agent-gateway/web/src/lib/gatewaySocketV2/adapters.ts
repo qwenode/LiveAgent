@@ -53,7 +53,9 @@ import {
   FsWriteTextRequestSchema,
   GatewayEnvelopeSchema,
   GitRequestSchema,
+  HistoryArchiveCwdRequestSchema,
   HistoryBranchRequestSchema,
+  HistoryCleanupCwdRequestSchema,
   HistoryDeleteRequestSchema,
   HistoryGetRequestSchema,
   HistoryListRequestSchema,
@@ -489,6 +491,7 @@ function agentRequestPayload(type: string, body: J): GatewayEnvelope["payload"] 
           pageSize: n32(body.page_size),
           cwd: trimStr(body.cwd),
           cwdEmpty: bool(body.cwd_empty),
+          includeArchived: bool(body.include_archived),
         }),
       };
     case "history.workdirs":
@@ -569,6 +572,20 @@ function agentRequestPayload(type: string, body: J): GatewayEnvelope["payload"] 
           conversationId: trimStr(body.conversation_id),
           enabled: bool(body.enabled),
           redactToolContent: optBool(body.redact_tool_content),
+        }),
+      };
+    case "history.archive_cwd":
+      return {
+        case: "historyArchiveCwd",
+        value: create(HistoryArchiveCwdRequestSchema, {
+          cwd: trimStr(body.cwd),
+        }),
+      };
+    case "history.cleanup_cwd":
+      return {
+        case: "historyCleanupCwd",
+        value: create(HistoryCleanupCwdRequestSchema, {
+          cwd: trimStr(body.cwd),
         }),
       };
     case "history.delete":
@@ -1049,6 +1066,12 @@ function decodeAgentResponse(envelope: AgentEnvelope, options: { agentOnline: bo
         frameError("unexpected agent response");
       }
       return historyShareStatusPayload(payload.value.share);
+    case "historyArchiveCwdResp":
+    case "historyCleanupCwdResp":
+      return {
+        conversation_ids: payload.value.conversationIds,
+        affected_count: payload.value.affectedCount,
+      };
     case "historyDeleteResp":
       return { ok: true };
     case "historyWorkdirsResp":
@@ -1273,6 +1296,8 @@ function conversationSummaryPayload(conversation: ConversationSummary): J {
     cwd: conversation.cwd,
     is_pinned: conversation.isPinned,
     pinned_at: num(conversation.pinnedAt),
+    is_archived: conversation.isArchived,
+    archived_at: num(conversation.archivedAt),
     is_shared: conversation.isShared,
     selected_model_json: conversation.selectedModelJson,
   };

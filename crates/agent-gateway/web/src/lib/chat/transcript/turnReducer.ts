@@ -677,9 +677,21 @@ export function rebuildTurnFromSnapshot(turn: Turn, parsed: ChatEntry[]): Turn {
     if (entry.kind === "user") {
       if (!user) {
         user = { ...entry, id: seededUserEntryId(turn.runId || turn.key) };
-      } else if (entry.messageId && user.messageId !== entry.messageId) {
-        user = { ...user, messageId: entry.messageId };
+        continue;
       }
+      if (!entry.messageId || entry.messageId === user.messageId) {
+        if (entry.messageId && user.messageId !== entry.messageId) {
+          user = { ...user, messageId: entry.messageId };
+        }
+        continue;
+      }
+      const previousUser = turn.entries.find(
+        (candidate) => candidate.kind === "user" && candidate.messageId === entry.messageId,
+      );
+      entries.push({
+        ...entry,
+        id: previousUser?.id ?? `${ns}:s:${entry.id}`,
+      });
       continue;
     }
     // Keep the delta-built identity wherever the canonical entry corresponds

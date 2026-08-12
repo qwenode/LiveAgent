@@ -85,6 +85,7 @@ import type {
   HistoryDetail,
   HistoryList,
   HistoryListFilter,
+  HistoryProjectMutationResult,
   HistoryShareStatus,
   HistoryWorkdirsResponse,
   MemoryManagePayload,
@@ -131,7 +132,7 @@ export type GatewayChatCommandInput = {
   clientRequestId?: string;
   runtimeControls?: GatewayChatRuntimeControls;
   baseMessageRef?: HistoryMessageRef;
-  queuePolicy?: "auto" | "append" | "interrupt";
+  queuePolicy?: "auto" | "append" | "interrupt" | "steer";
   skillPresetId?: string;
   skillsDisabled?: boolean;
 };
@@ -2449,7 +2450,13 @@ export class GatewayWebSocketClient {
     pageSize: number,
     filter?: HistoryListFilter,
   ): Promise<HistoryList> {
-    const payload: { page: number; page_size: number; cwd?: string; cwd_empty?: boolean } = {
+    const payload: {
+      page: number;
+      page_size: number;
+      cwd?: string;
+      cwd_empty?: boolean;
+      include_archived?: boolean;
+    } = {
       page: normalizeHistoryListPage(page),
       page_size: normalizeHistoryListPageSize(pageSize),
     };
@@ -2459,6 +2466,9 @@ export class GatewayWebSocketClient {
     }
     if (filter?.cwdEmpty === true) {
       payload.cwd_empty = true;
+    }
+    if (filter?.includeArchived === true) {
+      payload.include_archived = true;
     }
     // running_conversations 由 chat_activities 帧提供：并行取回合并，返回形状不变。
     const [list, runningConversations] = await Promise.all([
@@ -2557,6 +2567,14 @@ export class GatewayWebSocketClient {
       payload.redact_tool_content = options.redactToolContent;
     }
     return this.request<HistoryShareStatus>("history.share.set", payload);
+  }
+
+  async archiveHistoryByCwd(cwd: string): Promise<HistoryProjectMutationResult> {
+    return this.request<HistoryProjectMutationResult>("history.archive_cwd", { cwd });
+  }
+
+  async cleanupHistoryByCwd(cwd: string): Promise<HistoryProjectMutationResult> {
+    return this.request<HistoryProjectMutationResult>("history.cleanup_cwd", { cwd });
   }
 
   async deleteHistory(conversationId: string): Promise<void> {
@@ -3828,6 +3846,8 @@ export type GatewayWebSocketClientLike = {
   ): Promise<ConversationSummary>;
   pinHistory(conversationId: string, isPinned: boolean): Promise<ConversationSummary>;
   setHistoryCwd(conversationId: string, cwd: string): Promise<ConversationSummary>;
+  archiveHistoryByCwd(cwd: string): Promise<HistoryProjectMutationResult>;
+  cleanupHistoryByCwd(cwd: string): Promise<HistoryProjectMutationResult>;
   getHistoryShare(conversationId: string): Promise<HistoryShareStatus>;
   setHistoryShare(
     conversationId: string,

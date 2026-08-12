@@ -12,7 +12,7 @@ export type SendChatOptions = {
   runtimeControls?: ChatRuntimeControls;
   workdir?: string;
   editMessageRef?: HistoryMessageRef;
-  queuePolicy?: "auto" | "append" | "interrupt";
+  queuePolicy?: "auto" | "append" | "interrupt" | "steer";
   // false for queue-destined sends: no transcript echo, the queue panel owns
   // the prompt until it actually runs.
   optimisticEcho?: boolean;

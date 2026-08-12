@@ -61,6 +61,120 @@ test("activity events drive the running map with run identity", () => {
   });
   assert.equal(store.isRunning("conv-1"), false);
   assert.equal(notifications, 2);
+  assert.deepEqual(store.getSnapshot().idleTransitions.get("conv-1"), {
+    runId: "run-1",
+    updatedAt: 20,
+  });
+});
+
+test("terminal activity settles only the matching active run", () => {
+  const store = createActivityStore();
+  store.applyActivityEvent({
+    conversationId: "conv-1",
+    runId: "run-2",
+    running: true,
+    state: "running",
+    workdir: "/workspace",
+    updatedAt: 20,
+  });
+
+  assert.equal(
+    store.applyActivityEvent({
+      conversationId: "conv-1",
+      runId: "run-1",
+      running: false,
+      state: "failed",
+      workdir: "/workspace",
+      updatedAt: 30,
+    }),
+    false,
+    "a delayed terminal for an old run is rejected even with a newer timestamp",
+  );
+  assert.equal(store.get("conv-1")?.runId, "run-2");
+  assert.equal(store.getSnapshot().idleTransitions.has("conv-1"), false);
+
+  assert.equal(
+    store.applyActivityEvent({
+      conversationId: "conv-1",
+      runId: null,
+      running: false,
+      state: "failed",
+      workdir: "/workspace",
+      updatedAt: 31,
+    }),
+    false,
+    "an unidentified terminal cannot clear an active run",
+  );
+  assert.equal(store.get("conv-1")?.runId, "run-2");
+
+  assert.equal(
+    store.applyActivityEvent({
+      conversationId: "conv-1",
+      runId: "run-2",
+      running: false,
+      state: "completed",
+      workdir: "/workspace",
+      updatedAt: 32,
+    }),
+    true,
+  );
+  assert.equal(store.isRunning("conv-1"), false);
+  assert.deepEqual(store.getSnapshot().idleTransitions.get("conv-1"), {
+    runId: "run-2",
+    updatedAt: 32,
+  });
+});
+
+test("a newer running event can resurrect the same run after a terminal", () => {
+  const store = createActivityStore();
+  assert.equal(
+    store.applyActivityEvent({
+      conversationId: "conv-1",
+      runId: "run-1",
+      running: false,
+      state: "failed",
+      workdir: "/workspace",
+      updatedAt: 20,
+    }),
+    true,
+  );
+  assert.equal(
+    store.applyActivityEvent({
+      conversationId: "conv-1",
+      runId: "run-1",
+      running: true,
+      state: "running",
+      workdir: "/workspace",
+      updatedAt: 21,
+    }),
+    true,
+  );
+  assert.equal(store.get("conv-1")?.runId, "run-1");
+  assert.equal(store.getSnapshot().idleTransitions.has("conv-1"), false);
+
+  assert.equal(
+    store.applyActivityEvent({
+      conversationId: "conv-stale",
+      runId: "run-stale",
+      running: false,
+      state: "failed",
+      workdir: null,
+      updatedAt: 50,
+    }),
+    true,
+  );
+  assert.equal(
+    store.applyActivityEvent({
+      conversationId: "conv-stale",
+      runId: "run-stale",
+      running: true,
+      state: "running",
+      workdir: null,
+      updatedAt: 50,
+    }),
+    false,
+    "an equal timestamp cannot revive a terminal run",
+  );
 });
 
 test("hydration drops stale entries and adopts the snapshot", () => {

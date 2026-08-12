@@ -174,6 +174,7 @@ import {
 import { sortSidebarConversations } from "@liveagent/ui/lib/sidebar/reconcile";
 import { sidebarScopeKey } from "@liveagent/ui/lib/sidebar/scope";
 import { createSidebarStore } from "@liveagent/ui/lib/sidebar/store";
+import type { SidebarRunOutcome } from "@liveagent/ui/lib/sidebar/types";
 import { useSidebarSelector } from "@liveagent/ui/lib/sidebar/useSidebarSelector";
 import {
   findWorkspaceProject,
@@ -361,6 +362,8 @@ export default function GatewayApp() {
   const [sharedHistoryItems, setSharedHistoryItems] = useState<ChatHistorySummary[]>([]);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState<"chat" | "skills-hub" | "mcp-hub">("chat");
+  const activeViewRef = useRef(activeView);
+  activeViewRef.current = activeView;
   const [resourceSettingsProject, setResourceSettingsProject] = useState<WorkspaceProject | null>(
     null,
   );
@@ -518,6 +521,7 @@ export default function GatewayApp() {
     () => chatCommandPipeline.pendingConversationIds(),
     [chatCommandPipeline],
   );
+  const projectTaskMutationPathKeysRef = useRef(new Set<string>());
   // biome-ignore lint/correctness/useExhaustiveDependencies: Agent ID 是侧边栏 Store 的数据隔离边界。
   const sidebarStore = useMemo(
     () =>
@@ -832,6 +836,46 @@ export default function GatewayApp() {
     const conversationIdValue = targetConversationId.trim();
     return conversationIdValue !== "" && getDisplayedConversationId() === conversationIdValue;
   }
+
+  const isConversationActivelyViewed = useCallback((targetConversationId: string) => {
+    const conversationIdValue = targetConversationId.trim();
+    return (
+      conversationIdValue !== "" &&
+      activeViewRef.current === "chat" &&
+      getDisplayedConversationId() === conversationIdValue &&
+      (typeof document === "undefined" ||
+        (document.visibilityState !== "hidden" && document.hasFocus()))
+    );
+  }, []);
+
+  useEffect(() => {
+    const targetConversationId = resolveVisibleConversationId(selectedHistoryId, conversationId);
+    const clearDisplayedRunResultIfViewed = () => {
+      if (
+        targetConversationId &&
+        activeView === "chat" &&
+        document.visibilityState !== "hidden" &&
+        document.hasFocus()
+      ) {
+        sidebarStore.clearRunResult(targetConversationId);
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "hidden") {
+        clearDisplayedRunResultIfViewed();
+      }
+    };
+
+    clearDisplayedRunResultIfViewed();
+    window.addEventListener("pageshow", clearDisplayedRunResultIfViewed);
+    window.addEventListener("focus", clearDisplayedRunResultIfViewed);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("pageshow", clearDisplayedRunResultIfViewed);
+      window.removeEventListener("focus", clearDisplayedRunResultIfViewed);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [activeView, conversationId, selectedHistoryId, sidebarStore]);
 
   // Sent-prompt history for the composer's ↑/↓ recall. Read lazily from the
   // displayed conversation's transcript snapshot at the moment recall starts,
@@ -1732,7 +1776,39 @@ export default function GatewayApp() {
       return;
     }
     const unsubscribe = api.subscribeChatActivity((event: ConversationActivityEvent) => {
-      activityStore.applyActivityEvent(event);
+      // Validate ordering and run identity before allowing the event to mutate
+      // completion attention. A delayed terminal for a superseded run may still
+      // settle its command pipeline below, but it must not clear the active run
+      // or expose a stale unseen-result dot.
+      const activityAccepted = activityStore.applyActivityEvent(event);
+      if (activityAccepted) {
+        if (event.running) {
+          // A genuinely active run makes any prior completion stale. The
+          // adapter's running event also resets provisional same-run dedupe when
+          // Gateway resurrects a run after an inferred-loss terminal.
+          sidebarStore.clearRunResult(event.conversationId);
+        } else if (
+          event.state === "completed" ||
+          event.state === "failed" ||
+          event.state === "cancelled"
+        ) {
+          const outcome: SidebarRunOutcome =
+            event.state === "failed"
+              ? "failure"
+              : event.state === "cancelled"
+                ? "cancelled"
+                : "success";
+          sidebarStore.markRunResult({
+            conversationId: event.conversationId,
+            outcome,
+            runId: event.runId,
+            workdir: event.workdir,
+            updatedAt: event.updatedAt || undefined,
+            // Failures remain visible in the title even when the chat is open.
+            seen: outcome === "failure" ? false : isConversationActivelyViewed(event.conversationId),
+          });
+        }
+      }
       // Settle pending commands from the always-on hub too: the run may
       // start (or finish) while its conversation is not the displayed one,
       // and without this the 60s startup watchdog would fire spuriously.
@@ -1747,7 +1823,7 @@ export default function GatewayApp() {
       }
     });
     return unsubscribe;
-  }, [activityStore, api, chatCommandPipeline]);
+  }, [activityStore, api, chatCommandPipeline, isConversationActivelyViewed, sidebarStore]);
 
   useEffect(() => {
     if (!api) {
@@ -1809,6 +1885,9 @@ export default function GatewayApp() {
           // transition of the single row list (identical row keys, same DOM
           // container, key-addressed measurement cache) — no scroll
           // compensation is needed.
+          if (!isReplay) {
+            sidebarStore.clearRunResult(targetConversationId);
+          }
           chatCommandPipeline.handleRunSignal(
             targetConversationId,
             readEventRunId(event),
@@ -1822,9 +1901,29 @@ export default function GatewayApp() {
             readEventRunId(event),
             eventClientRequestId || undefined,
           );
-          // Settle the sidebar dot by run identity: the stream's terminal is
-          // authoritative even when the chat.activity broadcast was missed.
-          activityStore.settleRun(targetConversationId, readEventRunId(event));
+          // Settle the running state and preserve an unseen terminal result by
+          // run identity when the global chat.activity broadcast was missed.
+          const finishedRunId = readEventRunId(event);
+          activityStore.settleRun(targetConversationId, finishedRunId);
+          const outcome: SidebarRunOutcome =
+            event.status === "failed"
+              ? "failure"
+              : event.status === "cancelled"
+                ? "cancelled"
+                : "success";
+          if (!isReplay) {
+            sidebarStore.markRunResult({
+              conversationId: targetConversationId,
+              outcome,
+              runId: finishedRunId,
+              workdir:
+                conversationWorkdirsRef.current.get(targetConversationId)?.trim() ||
+                sidebarStore.peek(targetConversationId)?.cwd?.trim() ||
+                null,
+              // Failures remain visible in the title even when the chat is open.
+              seen: outcome === "failure" ? false : isConversationActivelyViewed(targetConversationId),
+            });
+          }
           const finishedTitle =
             typeof (event as { title?: unknown }).title === "string"
               ? ((event as { title: string }).title ?? "").trim()
@@ -1862,7 +1961,9 @@ export default function GatewayApp() {
       applyLiveConversationTitle,
       chatCommandPipeline,
       handleTunnelManagerChatEvent,
+      isConversationActivelyViewed,
       refreshChatQueueSnapshot,
+      sidebarStore,
     ],
   );
 
@@ -2335,6 +2436,7 @@ export default function GatewayApp() {
       // conversations to the GUI queue instead.
       return null;
     }
+    sidebarStore.clearRunResult(activeConversationId);
     clearCachedComposerDraft(activeConversationId);
 
     const clientRequestId = options?.clientRequestId?.trim() || createUuid();
@@ -2512,7 +2614,7 @@ export default function GatewayApp() {
     clearCachedComposerDraft(key);
   }
 
-  async function submitCurrentComposerToGuiQueue(queuePolicy: "append" | "interrupt") {
+  async function submitCurrentComposerToGuiQueue(queuePolicy: "append" | "interrupt" | "steer") {
     const conversationIdValue = getDisplayedConversationId();
     const draft = composerRef.current?.getDraft() ?? null;
     const uploadedFiles = pendingUploadedFiles.slice();
@@ -2897,7 +2999,7 @@ export default function GatewayApp() {
               const page = await currentApi.listHistory(
                 pageNumber,
                 PROJECT_HISTORY_DELETE_PAGE_SIZE,
-                { cwd: path },
+                { cwd: path, includeArchived: true },
               );
               for (const item of page.conversations) {
                 const id = item.id.trim();
@@ -3072,6 +3174,165 @@ export default function GatewayApp() {
     ],
   );
 
+  const applyProjectTaskMutationResult = useCallback(
+    (conversationIds: readonly string[]) => {
+      const affectedIds = new Set(conversationIds.map((id) => id.trim()).filter(Boolean));
+      if (affectedIds.size === 0) {
+        return;
+      }
+      const displayedId = getDisplayedConversationId();
+      let displayedRemoved = false;
+      for (const conversationId of affectedIds) {
+        sidebarStore.removeLocal(conversationId);
+        transcriptStoreRegistry.remove(conversationId);
+        historyWindowStatesRef.current.delete(conversationId);
+        conversationWorkdirsRef.current.delete(conversationId);
+        composerDraftCacheRef.current.delete(conversationId);
+        setPendingUploadsForConversation(conversationId, []);
+        if (conversationId === displayedId) {
+          displayedRemoved = true;
+        }
+      }
+      const nextSharedItems = sharedHistoryItemsRef.current.filter(
+        (item) => !affectedIds.has(item.id),
+      );
+      if (nextSharedItems.length !== sharedHistoryItemsRef.current.length) {
+        sharedHistoryItemsRef.current = nextSharedItems;
+        setSharedHistoryItems(nextSharedItems);
+      }
+      if (displayedRemoved) {
+        startNewConversation({
+          workdir: isAgentMode ? activeWorkspaceProjectPath || undefined : undefined,
+        });
+      }
+      void sidebarStore.refreshWorkdirs("delete");
+    },
+    [
+      activeWorkspaceProjectPath,
+      isAgentMode,
+      setPendingUploadsForConversation,
+      sidebarStore,
+      transcriptStoreRegistry,
+    ],
+  );
+
+  const projectHasRunningTasks = useCallback(
+    (project: WorkspaceProject) => {
+      const pathKey = workspaceProjectPathKey(project.path);
+      if (!pathKey) {
+        return false;
+      }
+      const sidebarSnapshot = sidebarStore.getSnapshot();
+      if (sidebarSnapshot.runningWorkdirPathKeys.has(pathKey)) {
+        return true;
+      }
+      for (const [conversationId, activity] of activityStore.getSnapshot().activities) {
+        const runtimeWorkdir =
+          activity.workdir?.trim() ||
+          conversationWorkdirsRef.current.get(conversationId)?.trim() ||
+          "";
+        const persistedWorkdir = sidebarStore.peek(conversationId)?.cwd?.trim() || "";
+        if (workspaceProjectPathKey(runtimeWorkdir || persistedWorkdir) === pathKey) {
+          return true;
+        }
+      }
+      return false;
+    },
+    [activityStore, sidebarStore],
+  );
+
+  const handleArchiveProjectTasks = useCallback(
+    (project: WorkspaceProject) => {
+      const pathKey = workspaceProjectPathKey(project.path);
+      const currentApi = api;
+      if (!pathKey || !currentApi || projectTaskMutationPathKeysRef.current.has(pathKey)) {
+        if (!currentApi) {
+          setSidebarActionError(
+            translate("chat.workspaceTaskMaintenanceDisconnected", settings.locale),
+          );
+        }
+        return;
+      }
+      if (projectHasRunningTasks(project)) {
+        setSidebarActionError(translate("chat.workspaceTaskMaintenanceRunning", settings.locale));
+        return;
+      }
+      projectTaskMutationPathKeysRef.current.add(pathKey);
+      setSidebarActionError(null);
+      void currentApi
+        .archiveHistoryByCwd(project.path)
+        .then((result) => applyProjectTaskMutationResult(result.conversation_ids))
+        .catch((error) => {
+          setSidebarActionError(
+            asErrorMessage(error, translate("chat.workspaceArchiveTasksFailed", settings.locale)),
+          );
+        })
+        .finally(() => {
+          projectTaskMutationPathKeysRef.current.delete(pathKey);
+        });
+    },
+    [api, applyProjectTaskMutationResult, projectHasRunningTasks, settings.locale],
+  );
+
+  const handleCleanupProjectTasks = useCallback(
+    (project: WorkspaceProject) => {
+      const pathKey = workspaceProjectPathKey(project.path);
+      const currentApi = api;
+      if (!pathKey || !currentApi || projectTaskMutationPathKeysRef.current.has(pathKey)) {
+        if (!currentApi) {
+          setSidebarActionError(
+            translate("chat.workspaceTaskMaintenanceDisconnected", settings.locale),
+          );
+        }
+        return;
+      }
+      if (projectHasRunningTasks(project)) {
+        setSidebarActionError(translate("chat.workspaceTaskMaintenanceRunning", settings.locale));
+        return;
+      }
+      projectTaskMutationPathKeysRef.current.add(pathKey);
+      void (async () => {
+        try {
+          const confirmed = await requestConfirmDialog({
+            title: translate("chat.workspaceCleanupTasksConfirm", settings.locale).replace(
+              "{name}",
+              project.name,
+            ),
+            description: translate("chat.workspaceCleanupTasksDescription", settings.locale),
+            confirmLabel: translate("chat.workspaceCleanupTasks", settings.locale),
+            cancelLabel: translate("chat.cancel", settings.locale),
+            closeLabel: translate("chat.cancel", settings.locale),
+            tone: "destructive",
+          });
+          if (!confirmed || projectHasRunningTasks(project)) {
+            if (confirmed) {
+              setSidebarActionError(
+                translate("chat.workspaceTaskMaintenanceRunning", settings.locale),
+              );
+            }
+            return;
+          }
+          setSidebarActionError(null);
+          const result = await currentApi.cleanupHistoryByCwd(project.path);
+          applyProjectTaskMutationResult(result.conversation_ids);
+        } catch (error) {
+          setSidebarActionError(
+            asErrorMessage(error, translate("chat.workspaceCleanupTasksFailed", settings.locale)),
+          );
+        } finally {
+          projectTaskMutationPathKeysRef.current.delete(pathKey);
+        }
+      })();
+    },
+    [
+      api,
+      applyProjectTaskMutationResult,
+      projectHasRunningTasks,
+      requestConfirmDialog,
+      settings.locale,
+    ],
+  );
+
   const handleArchiveWorkspaceProject = useCallback(
     (project: WorkspaceProject) => {
       const pathKey = workspaceProjectPathKey(project.path);
@@ -3171,6 +3432,7 @@ export default function GatewayApp() {
     if (!targetConversationId) {
       return;
     }
+    sidebarStore.clearRunResult(targetConversationId);
 
     const currentConversationId = getVisibleComposerConversationId().trim();
     if (currentConversationId !== targetConversationId) {
@@ -4837,6 +5099,8 @@ export default function GatewayApp() {
               onRemoveProject={handleRemoveWorkspaceProject}
               onArchiveProject={handleArchiveWorkspaceProject}
               onUnarchiveProject={handleUnarchiveWorkspaceProject}
+              onArchiveProjectTasks={handleArchiveProjectTasks}
+              onCleanupProjectTasks={handleCleanupProjectTasks}
               archivedProjectPathKeys={archivedWorkspaceProjectPathKeys}
               onNewConversation={handleSidebarNewConversation}
               onSelectConversation={handleSidebarSelectConversation}
@@ -5170,7 +5434,9 @@ export default function GatewayApp() {
                               submitInFlightRef.current = true;
                               void (async () => {
                                 try {
-                                  await submitCurrentComposerToGuiQueue("append");
+                                  await submitCurrentComposerToGuiQueue(
+                                    settings.system.runningAgentSendMode === "steer" ? "steer" : "interrupt",
+                                  );
                                 } finally {
                                   submitInFlightRef.current = false;
                                 }

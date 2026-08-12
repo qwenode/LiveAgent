@@ -12,6 +12,7 @@ import {
   selectListState,
   selectProjectActivityInputs,
   selectRunningConversationIds,
+  selectUnseenRunResults,
   selectWorkspaceFeeds,
   sidebarShallowEqual,
 } from "@liveagent/ui/lib/sidebar/selectors";
@@ -118,6 +119,8 @@ export type GatewaySidebarContainerProps = {
   onRemoveProject: (project: WorkspaceProject) => void;
   onArchiveProject: (project: WorkspaceProject) => void;
   onUnarchiveProject: (project: WorkspaceProject) => void;
+  onArchiveProjectTasks: (project: WorkspaceProject) => void;
+  onCleanupProjectTasks: (project: WorkspaceProject) => void;
   archivedProjectPathKeys?: ReadonlySet<string>;
   onNewConversation: () => void;
   onSelectConversation: (id: string) => void;
@@ -152,6 +155,7 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
   const listState = useSidebarSelector(store, selectListState, sidebarShallowEqual);
   const scopeKey = useSidebarSelector(store, (snapshot) => snapshot.scopeKey);
   const runningConversationIds = useSidebarSelector(store, selectRunningConversationIds);
+  const unseenRunResults = useSidebarSelector(store, selectUnseenRunResults);
   const mutations = useSidebarSelector(store, selectMutations);
   const mutationErrors = useSidebarSelector(store, selectMutationErrors);
   const projectActivityInputs = useSidebarSelector(
@@ -446,6 +450,7 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
       currentConversationId={props.currentConversationId}
       busyConversationIds={mutations}
       runningConversationIds={runningConversationIds}
+      unseenRunResults={unseenRunResults}
       listStatus={listState.status}
       scopeKey={scopeKey}
       totalItems={listState.totalCount}
@@ -464,6 +469,7 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
       activeProjectId={props.activeProjectId}
       missingProjectPathKeys={props.missingProjectPathKeys}
       runningProjectPathKeys={projectActivityInputs.runningWorkdirPathKeys}
+      unseenProjectOutcomes={projectActivityInputs.unseenWorkdirOutcomes}
       projectRenamingId={props.projectRenamingId}
       projectRenameDraft={props.projectRenameDraft}
       projectsCollapsed={props.projectsCollapsed}
@@ -489,6 +495,8 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
       onRemoveProject={props.onRemoveProject}
       onArchiveProject={props.onArchiveProject}
       onUnarchiveProject={props.onUnarchiveProject}
+      onArchiveProjectTasks={props.onArchiveProjectTasks}
+      onCleanupProjectTasks={props.onCleanupProjectTasks}
       archivedProjectPathKeys={props.archivedProjectPathKeys}
       onNewConversation={props.onNewConversation}
       onSelectConversation={props.onSelectConversation}

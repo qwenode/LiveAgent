@@ -107,7 +107,7 @@ export type ConversationActivityEvent = {
   conversationId: string;
   runId: string | null;
   running: boolean;
-  state: RunActivityState | null;
+  state: RunActivityState | RunFinishedStatus | null;
   workdir: string | null;
   clientRequestId: string | null;
   updatedAt: number;
@@ -222,7 +222,15 @@ export function normalizeActivityEvent(raw: unknown): ConversationActivityEvent 
     conversationId,
     runId: readString(value.run_id).trim() || null,
     running: value.running === true,
-    state: state === "queued" || state === "running" || state === "cancelling" ? state : null,
+    state:
+      state === "queued" ||
+      state === "running" ||
+      state === "cancelling" ||
+      state === "completed" ||
+      state === "failed" ||
+      state === "cancelled"
+        ? state
+        : null,
     workdir: readString(value.workdir).trim() || null,
     clientRequestId: readString(value.client_request_id).trim() || null,
     updatedAt: readNumber(value.updated_at),

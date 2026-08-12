@@ -49,6 +49,7 @@ export function normalizeGatewayConversationSummary(
   summary: ConversationSummary,
 ): SidebarConversation {
   const pinnedAt = normalizeGatewayEpochMs(summary.pinned_at);
+  const archivedAt = normalizeGatewayEpochMs(summary.archived_at);
   return {
     id: summary.id,
     title: formatConversationTitle(summary, summary.id),
@@ -64,6 +65,8 @@ export function normalizeGatewayConversationSummary(
     updatedAt: normalizeGatewayEpochMs(summary.updated_at),
     isPinned: summary.is_pinned === true,
     pinnedAt: summary.is_pinned === true && pinnedAt > 0 ? pinnedAt : null,
+    isArchived: summary.is_archived === true,
+    archivedAt: summary.is_archived === true && archivedAt > 0 ? archivedAt : null,
     isShared: summary.is_shared === true,
   };
 }
@@ -225,6 +228,7 @@ export function createWebSidebarBackend(deps: WebSidebarBackendDeps): SidebarBac
             listener({
               kind: "running",
               conversationId,
+              runId: activity.runId,
               workdir: activity.workdir,
               updatedAt: normalizeGatewayEpochMs(activity.updatedAt) || undefined,
             });
@@ -232,7 +236,12 @@ export function createWebSidebarBackend(deps: WebSidebarBackendDeps): SidebarBac
         }
         for (const conversationId of runningIds) {
           if (!next.has(conversationId)) {
-            listener({ kind: "idle", conversationId });
+            const transition = snapshot.idleTransitions.get(conversationId);
+            listener({
+              kind: "idle",
+              conversationId,
+              updatedAt: normalizeGatewayEpochMs(transition?.updatedAt) || undefined,
+            });
           }
         }
         runningIds = next;

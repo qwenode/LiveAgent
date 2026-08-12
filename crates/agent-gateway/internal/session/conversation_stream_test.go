@@ -535,7 +535,7 @@ func TestActivityHubCarriesRunIDs(t *testing.T) {
 		t.Fatalf("running activity = %#v", running)
 	}
 	idle := <-activity
-	if idle.Running || idle.ConversationID != "conv-1" {
+	if idle.Running || idle.ConversationID != "conv-1" || idle.RunID != "run-1" || idle.State != "completed" {
 		t.Fatalf("idle activity = %#v", idle)
 	}
 

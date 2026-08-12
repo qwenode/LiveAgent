@@ -21,8 +21,14 @@ export type ConversationActivity = {
 // Stale (stuck) entries are far older than this and still get dropped.
 const RECENT_PUSH_KEEP_MS = 15_000;
 
+export type ActivityIdleTransition = {
+  runId: string;
+  updatedAt: number;
+};
+
 export type ActivitySnapshot = {
   activities: ReadonlyMap<string, ConversationActivity>;
+  idleTransitions: ReadonlyMap<string, ActivityIdleTransition>;
   revision: number;
 };
 
@@ -31,7 +37,7 @@ export type ActivityStore = {
   subscribe(listener: () => void): () => void;
   isRunning(conversationId: string): boolean;
   get(conversationId: string): ConversationActivity | null;
-  applyActivityEvent(event: ConversationActivityEvent): void;
+  applyActivityEvent(event: ConversationActivityEvent): boolean;
   // Local settlement by run identity: a run_finished (or an activity-less
   // subscribe sync) proves the stored run ended even when the chat.activity
   // "stopped" broadcast was missed. Only the exact run is cleared — a newer
@@ -57,11 +63,14 @@ export type ActivityStore = {
 export function createActivityStore(options?: { now?: () => number }): ActivityStore {
   const now = options?.now ?? Date.now;
   let activities = new Map<string, ConversationActivity>();
-  let snapshot: ActivitySnapshot = { activities, revision: 0 };
+  let idleTransitions = new Map<string, ActivityIdleTransition>();
+  const latestIdleByConversation = new Map<string, ActivityIdleTransition>();
+  let snapshot: ActivitySnapshot = { activities, idleTransitions, revision: 0 };
   const listeners = new Set<() => void>();
 
-  const emit = () => {
-    snapshot = { activities, revision: snapshot.revision + 1 };
+  const emit = (removed?: ReadonlyMap<string, ActivityIdleTransition>) => {
+    idleTransitions = new Map(removed ?? []);
+    snapshot = { activities, idleTransitions, revision: snapshot.revision + 1 };
     for (const listener of listeners) {
       listener();
     }
@@ -88,20 +97,51 @@ export function createActivityStore(options?: { now?: () => number }): ActivityS
       // gateway; a stale timestamp can only appear after a reconnect race —
       // ignore anything older than what we already show.
       if (current && event.updatedAt > 0 && event.updatedAt < current.updatedAt) {
-        return;
+        return false;
       }
-      if (!event.running || !event.runId) {
-        if (!activities.has(event.conversationId)) {
-          return;
+
+      if (!event.running) {
+        // A terminal signal may settle only the run it names. This mirrors
+        // settleRun and prevents a delayed terminal for an older run from
+        // deleting a newer run that now owns the conversation.
+        if (!event.runId || (current && current.runId !== event.runId)) {
+          return false;
         }
-        activities = new Map(activities);
-        activities.delete(event.conversationId);
-        emit();
-        return;
+        const updatedAt = event.updatedAt > 0 ? event.updatedAt : (current?.updatedAt ?? 0);
+        const previousIdle = latestIdleByConversation.get(event.conversationId);
+        if (
+          !current &&
+          previousIdle &&
+          (updatedAt <= 0 ||
+            updatedAt < previousIdle.updatedAt ||
+            (updatedAt === previousIdle.updatedAt && event.runId === previousIdle.runId))
+        ) {
+          return false;
+        }
+        if (current) {
+          activities = new Map(activities);
+          activities.delete(event.conversationId);
+        }
+        const transition = { runId: event.runId, updatedAt };
+        latestIdleByConversation.set(event.conversationId, transition);
+        emit(new Map([[event.conversationId, transition]]));
+        return true;
+      }
+
+      if (!event.runId) {
+        return false;
+      }
+      const previousIdle = latestIdleByConversation.get(event.conversationId);
+      if (
+        !current &&
+        previousIdle &&
+        (event.updatedAt <= 0 || event.updatedAt <= previousIdle.updatedAt)
+      ) {
+        return false;
       }
       const next: ConversationActivity = {
         runId: event.runId,
-        state: event.state ?? "running",
+        state: normalizeState(event.state),
         workdir: event.workdir,
         updatedAt: event.updatedAt,
         receivedAt: now(),
@@ -112,11 +152,15 @@ export function createActivityStore(options?: { now?: () => number }): ActivityS
         current.state === next.state &&
         current.workdir === next.workdir
       ) {
-        return;
+        return false;
       }
       activities = new Map(activities);
       activities.set(event.conversationId, next);
+      if (previousIdle) {
+        latestIdleByConversation.delete(event.conversationId);
+      }
       emit();
+      return true;
     },
 
     settleRun: (conversationId, runId) => {
@@ -129,7 +173,9 @@ export function createActivityStore(options?: { now?: () => number }): ActivityS
       }
       activities = new Map(activities);
       activities.delete(conversationId);
-      emit();
+      const transition = { runId, updatedAt: current.updatedAt };
+      latestIdleByConversation.set(conversationId, transition);
+      emit(new Map([[conversationId, transition]]));
     },
 
     hydrate: (items, hydrateOptions) => {
@@ -150,13 +196,21 @@ export function createActivityStore(options?: { now?: () => number }): ActivityS
         });
       }
 
-      // An empty authoritative snapshot means idle everywhere.
+      // An empty authoritative snapshot means idle everywhere. Preserve each
+      // removed run's gateway timestamp for the sidebar idle tombstone instead
+      // of substituting the browser clock in the adapter.
       if (incoming.size === 0) {
         if (activities.size === 0) {
           return;
         }
+        const removed = new Map<string, ActivityIdleTransition>();
+        for (const [conversationId, current] of activities) {
+          const transition = { runId: current.runId, updatedAt: current.updatedAt };
+          removed.set(conversationId, transition);
+          latestIdleByConversation.set(conversationId, transition);
+        }
         activities = new Map();
-        emit();
+        emit(removed);
         return;
       }
 
@@ -207,16 +261,34 @@ export function createActivityStore(options?: { now?: () => number }): ActivityS
       if (!changed) {
         return;
       }
+      const removed = new Map<string, ActivityIdleTransition>();
+      for (const [conversationId, current] of activities) {
+        if (merged.has(conversationId)) {
+          continue;
+        }
+        const transition = { runId: current.runId, updatedAt: current.updatedAt };
+        removed.set(conversationId, transition);
+        latestIdleByConversation.set(conversationId, transition);
+      }
+      for (const conversationId of merged.keys()) {
+        latestIdleByConversation.delete(conversationId);
+      }
       activities = merged;
-      emit();
+      emit(removed);
     },
 
     clear: () => {
       if (activities.size === 0) {
         return;
       }
+      const removed = new Map<string, ActivityIdleTransition>();
+      for (const [conversationId, current] of activities) {
+        const transition = { runId: current.runId, updatedAt: current.updatedAt };
+        removed.set(conversationId, transition);
+        latestIdleByConversation.set(conversationId, transition);
+      }
       activities = new Map();
-      emit();
+      emit(removed);
     },
   };
 }

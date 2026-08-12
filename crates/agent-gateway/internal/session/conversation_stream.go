@@ -115,9 +115,11 @@ type ConversationActivityEvent struct {
 	RunID           string
 	ClientRequestID string
 	Running         bool
-	State           string
-	Workdir         string
-	UpdatedAt       time.Time
+	// State is queued/running/cancelling while active, and the authoritative
+	// completed/failed/cancelled outcome on the terminal idle broadcast.
+	State     string
+	Workdir   string
+	UpdatedAt time.Time
 }
 
 // ChatCommandUpdate notifies the connection that issued a chat command about
@@ -749,10 +751,11 @@ func (s *conversationStreamStore) runFinishedLocked(
 		stream.latestSnapshot = nil
 	}
 	if stream.activity != nil && stream.activity.RunID == runID {
+		finishedActivity := *stream.activity
 		stream.activity = nil
 		stream.runNeedsSnapshot = false
 		stream.snapshotDirty = false
-		s.publishActivityLocked(stream, now)
+		s.publishFinishedActivityLocked(stream, &finishedActivity, status, now)
 	}
 }
 
@@ -844,6 +847,27 @@ func (s *conversationStreamStore) publishActivityLocked(stream *conversationStre
 		if stream.activity.Workdir != "" {
 			event.Workdir = stream.activity.Workdir
 		}
+	}
+	s.activityHub.publish(event)
+}
+
+func (s *conversationStreamStore) publishFinishedActivityLocked(
+	stream *conversationStream,
+	finished *RunActivity,
+	status string,
+	now time.Time,
+) {
+	event := ConversationActivityEvent{
+		ConversationID:  stream.conversationID,
+		AgentID:         stream.agentID,
+		RunID:           finished.RunID,
+		ClientRequestID: finished.ClientRequestID,
+		State:           status,
+		Workdir:         finished.Workdir,
+		UpdatedAt:       now,
+	}
+	if event.Workdir == "" {
+		event.Workdir = stream.workdir
 	}
 	s.activityHub.publish(event)
 }

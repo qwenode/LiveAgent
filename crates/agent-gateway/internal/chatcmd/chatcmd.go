@@ -83,7 +83,7 @@ func NormalizeRequestBody(body *handler.ChatRequestBody) error {
 
 func normalizeQueuePolicy(value string) string {
 	switch strings.TrimSpace(value) {
-	case "append", "interrupt":
+	case "append", "interrupt", "steer":
 		return strings.TrimSpace(value)
 	default:
 		return "auto"

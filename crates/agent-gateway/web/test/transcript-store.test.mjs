@@ -439,6 +439,17 @@ test("optimistic user bubble binds to its run keeping its key", () => {
   assert.equal(users[0].key, optimisticKey, "user bubble keeps its identity");
 });
 
+test("same-run distinct user messages keep the initial anchor and ordered steer entry", () => {
+  const store = createTranscriptStore();
+  store.applyEvent(userMessage("run-1", 1, "initial", { message_id: "m1" }));
+  store.applyEvent(runStarted("run-1", 2));
+  store.applyEvent(token("run-1", 3, "reply"));
+  store.applyEvent(userMessage("run-1", 4, "steer", { message_id: "m2" }));
+  store.flush();
+  const users = allRows(store.getSnapshot()).filter((row) => row.kind === "user");
+  assert.deepEqual(users.map((row) => row.text), ["initial", "steer"]);
+});
+
 test("a desktop identity echo binds the live turn to its persisted message id", () => {
   const store = createTranscriptStore();
   store.applyEvent(userMessage("run-1", 1, "same prompt"));

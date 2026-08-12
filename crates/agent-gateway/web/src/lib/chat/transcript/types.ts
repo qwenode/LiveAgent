@@ -14,12 +14,10 @@ export type RetryAttemptRecord = {
   errorMessage: string;
 };
 
-// A turn is one prompt/response exchange of the live stream: the user bubble
-// (a single slot — a second user_message for the same run can only upsert it,
-// never append a sibling) plus every assistant-side entry its run produced.
-// Rows are emitted user-first from the same object, so "assistant content
-// rendered above its own prompt" and "duplicate prompt bubble" are
-// structurally unrepresentable.
+// A turn is one prompt/response exchange of the live stream: `user` anchors
+// the first user message, while later same-run user messages are ordered user
+// entries in `entries` alongside the assistant-side content. Rows are emitted
+// in entry order, so each steer prompt stays at its actual stream boundary.
 export type TurnPhase = "pending" | "streaming" | "settled";
 
 export type Turn = {

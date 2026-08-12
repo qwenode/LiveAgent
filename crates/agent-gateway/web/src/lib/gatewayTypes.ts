@@ -212,6 +212,8 @@ export type ConversationSummary = {
   selected_model_json?: string;
   is_pinned?: boolean;
   pinned_at?: number;
+  is_archived?: boolean;
+  archived_at?: number;
   is_shared?: boolean;
 };
 
@@ -219,6 +221,11 @@ export type HistoryList = {
   conversations: ConversationSummary[];
   total_count: number;
   running_conversations?: RunningConversationSummary[];
+};
+
+export type HistoryProjectMutationResult = {
+  conversation_ids: string[];
+  affected_count: number;
 };
 
 // history.list `running_conversations` items — the gateway's activity
@@ -234,6 +241,7 @@ export type RunningConversationSummary = {
 export type HistoryListFilter = {
   cwd?: string;
   cwdEmpty?: boolean;
+  includeArchived?: boolean;
 };
 
 export type HistoryWorkdirSummary = {

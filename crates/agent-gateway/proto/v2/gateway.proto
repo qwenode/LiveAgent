@@ -63,6 +63,8 @@ message GatewayEnvelope {
     ChatFileOpenRequest chat_file_open = 94;
     HistorySetCwdRequest history_set_cwd = 95;
     HistorySkillsRequest history_skills = 100;
+    HistoryArchiveCwdRequest history_archive_cwd = 101;
+    HistoryCleanupCwdRequest history_cleanup_cwd = 102;
   }
 
   // Legacy tunnel control/frame payloads (pre-rewrite protocol) and the
@@ -139,6 +141,8 @@ message AgentEnvelope {
     ErrorResponse error = 99;
     HistorySkillsResponse history_skills_resp = 100;
     HistorySetCwdResponse history_set_cwd_resp = 101;
+    HistoryArchiveCwdResponse history_archive_cwd_resp = 102;
+    HistoryCleanupCwdResponse history_cleanup_cwd_resp = 103;
   }
 
   // Legacy tunnel control/frame payloads (pre-rewrite protocol) and the
@@ -750,6 +754,7 @@ message HistoryListRequest {
   int32 page_size = 2;
   string cwd = 3;
   bool cwd_empty = 4;
+  bool include_archived = 5;
 }
 
 message HistoryListResponse {
@@ -771,6 +776,8 @@ message ConversationSummary {
   int64 pinned_at = 11;
   bool is_shared = 12;
   string selected_model_json = 13;
+  bool is_archived = 14;
+  int64 archived_at = 15;
 }
 
 message HistoryGetRequest {
@@ -892,6 +899,24 @@ message HistoryDeleteRequest {
 }
 
 message HistoryDeleteResponse {}
+
+message HistoryArchiveCwdRequest {
+  string cwd = 1;
+}
+
+message HistoryArchiveCwdResponse {
+  repeated string conversation_ids = 1;
+  int32 affected_count = 2;
+}
+
+message HistoryCleanupCwdRequest {
+  string cwd = 1;
+}
+
+message HistoryCleanupCwdResponse {
+  repeated string conversation_ids = 1;
+  int32 affected_count = 2;
+}
 
 message HistorySyncEvent {
   string kind = 1;

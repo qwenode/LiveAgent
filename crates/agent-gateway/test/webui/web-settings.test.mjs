@@ -79,7 +79,7 @@ test("gateway model picker keeps same-name provider instances in separate groups
   );
 });
 
-test("web settings normalize and persist the subagent fast model", () => {
+test("web settings normalize and persist subagent settings", () => {
   installWindow();
   const customProviders = [
     {
@@ -96,12 +96,51 @@ test("web settings normalize and persist the subagent fast model", () => {
     customProviders,
     customSettings: {
       subagentFastModel: { customProviderId: "provider-1", model: "gpt-5-mini" },
+      subagentProactiveDelegation: true,
+      subagentMaxRounds: 75,
     },
   });
   assert.deepEqual(normalized.customSettings.subagentFastModel, {
     customProviderId: "provider-1",
     model: "gpt-5-mini",
   });
+  assert.equal(normalized.customSettings.subagentProactiveDelegation, true);
+  assert.equal(normalized.customSettings.subagentMaxRounds, 75);
+  assert.equal(
+    settings.normalizeSettings({
+      customSettings: { subagentProactiveDelegation: "true" },
+    }).customSettings.subagentProactiveDelegation,
+    false,
+  );
+  assert.equal(settings.getDefaultSettings().customSettings.subagentProactiveDelegation, false);
+  assert.equal(settings.getDefaultSettings().customSettings.subagentMaxRounds, 50);
+  assert.equal(
+    settings.normalizeSettings({ customSettings: { subagentMaxRounds: 1 } }).customSettings
+      .subagentMaxRounds,
+    2,
+  );
+  assert.equal(
+    settings.normalizeSettings({ customSettings: { subagentMaxRounds: 0 } }).customSettings
+      .subagentMaxRounds,
+    2,
+  );
+  assert.equal(
+    settings.normalizeSettings({ customSettings: { subagentMaxRounds: -3 } }).customSettings
+      .subagentMaxRounds,
+    2,
+  );
+  assert.equal(
+    settings.normalizeSettings({ customSettings: { subagentMaxRounds: 999 } }).customSettings
+      .subagentMaxRounds,
+    200,
+  );
+  for (const value of [undefined, "", "nope", null]) {
+    assert.equal(
+      settings.normalizeSettings({ customSettings: { subagentMaxRounds: value } }).customSettings
+        .subagentMaxRounds,
+      50,
+    );
+  }
 
   const stale = settings.normalizeSettings({
     customProviders,
@@ -112,16 +151,21 @@ test("web settings normalize and persist the subagent fast model", () => {
   assert.equal(stale.customSettings.subagentFastModel, undefined);
 
   webSettings.persistWebSettings(normalized);
+  const reloaded = webSettings.loadWebSettings("token");
   assert.deepEqual(
-    webSettings.loadWebSettings("token").customSettings.subagentFastModel,
+    reloaded.customSettings.subagentFastModel,
     normalized.customSettings.subagentFastModel,
   );
+  assert.equal(reloaded.customSettings.subagentProactiveDelegation, true);
+  assert.equal(reloaded.customSettings.subagentMaxRounds, 75);
 
   const payload = settingsSync.buildGatewaySettingsSyncPayload(normalized);
   assert.deepEqual(payload.customSettings.subagentFastModel, {
     customProviderId: "provider-1",
     model: "gpt-5-mini",
   });
+  assert.equal(payload.customSettings.subagentProactiveDelegation, true);
+  assert.equal(payload.customSettings.subagentMaxRounds, 75);
   assert.equal(payload.customProviders[0].apiKey, undefined);
   const applied = settingsSync.applyGatewaySettingsSyncPayload(
     settings.normalizeSettings({ customProviders }),
@@ -131,6 +175,14 @@ test("web settings normalize and persist the subagent fast model", () => {
     customProviderId: "provider-1",
     model: "gpt-5-mini",
   });
+  assert.equal(applied.customSettings.subagentProactiveDelegation, true);
+  assert.equal(applied.customSettings.subagentMaxRounds, 75);
+
+  const missingFlag = settingsSync.applyGatewaySettingsSyncPayload(applied, {
+    customSettings: {},
+  });
+  assert.equal(missingFlag.customSettings.subagentProactiveDelegation, false);
+  assert.equal(missingFlag.customSettings.subagentMaxRounds, 75);
 });
 
 function installWindow(origin = "https://gateway.example") {

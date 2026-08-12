@@ -845,7 +845,9 @@ export function buildSubagentPlaceholderToolCalls(parentToolCall: ToolCall): Too
         role: optionalText(record.role),
         mode: record.mode === "worktree" || record.mode === "readonly" ? record.mode : undefined,
         task_type:
-          record.task_type === "search" || record.task_type === "synthesis"
+          record.task_type === "search" ||
+          record.task_type === "synthesis" ||
+          record.task_type === "routine"
             ? record.task_type
             : undefined,
         prompt,

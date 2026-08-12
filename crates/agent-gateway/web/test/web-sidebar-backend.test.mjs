@@ -234,6 +234,7 @@ test("subscribeEvents forwards history events normalized and bridges activity di
   assert.equal(events.length, 3);
   assert.equal(events[2].kind, "running");
   assert.equal(events[2].conversationId, "r1");
+  assert.equal(events[2].runId, "run-1");
   assert.equal(events[2].workdir, "/tmp/p");
   assert.equal(events[2].updatedAt, MILLIS);
 
@@ -245,7 +246,11 @@ test("subscribeEvents forwards history events normalized and bridges activity di
     updatedAt: MILLIS + 1,
   });
   assert.equal(events.length, 4);
-  assert.deepEqual(events[3], { kind: "idle", conversationId: "r1" });
+  assert.deepEqual(events[3], {
+    kind: "idle",
+    conversationId: "r1",
+    updatedAt: MILLIS + 1,
+  });
 
   // Unsubscribe detaches both sources.
   unsubscribe();

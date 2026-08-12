@@ -287,6 +287,9 @@ export function createTranscriptStore(options?: {
     turns = turns.map((turn) => (turn === previous ? next : turn));
   };
 
+  const stableUserMessageId = (user: UserChatEntry | null): string =>
+    user?.messageId?.trim() || user?.messageRef?.messageId.trim() || "";
+
   // Binds a turn to its run. If a separate turn already exists for that run
   // (a seeded `run:` turn created before the ownership was known), the two
   // describe the same exchange: absorb its content into `turn` — the user
@@ -300,10 +303,15 @@ export function createTranscriptStore(options?: {
     if (existing && existing !== turn) {
       const ownIds = new Set(next.entries.map((entry) => entry.id));
       const absorbed = existing.entries.filter((entry) => !ownIds.has(entry.id));
+      const nextUserId = stableUserMessageId(next.user);
+      const existingUserId = stableUserMessageId(existing.user);
+      const usersDiffer =
+        Boolean(nextUserId) && Boolean(existingUserId) && nextUserId !== existingUserId;
+      const secondaryUser = usersDiffer && next.user ? [next.user] : [];
       next = {
         ...next,
-        user: next.user ?? existing.user,
-        entries: absorbed.length ? [...next.entries, ...absorbed] : next.entries,
+        user: next.user && !existing.user ? next.user : existing.user ?? next.user,
+        entries: [...secondaryUser, ...next.entries, ...absorbed],
         phase: existing.phase === "streaming" ? "streaming" : next.phase,
       };
       turns = turns.filter((candidate) => candidate !== existing);
@@ -512,6 +520,30 @@ export function createTranscriptStore(options?: {
     // slot is already filled — the bubble keeps its id, nothing remounts.
     const ownTurn = findTurnByCri(clientRequestId);
     if (ownTurn) {
+      const existingRunTurn = findTurnByRunId(runId);
+      if (existingRunTurn && existingRunTurn !== ownTurn && existingRunTurn.user) {
+        const ownUser = ownTurn.user
+          ? bindUserIdentity(ownTurn.user)
+          : {
+              id: optimisticUserEntryId(clientRequestId),
+              kind: "user" as const,
+              text,
+              attachments,
+              messageId: messageId || undefined,
+              messageRef,
+              timestamp: Date.now(),
+            };
+        const duplicateIndex = existingRunTurn.entries.findIndex(
+          (entry) => entry.kind === "user" && messageId && entry.messageId === messageId,
+        );
+        const entries = existingRunTurn.entries.slice();
+        if (duplicateIndex >= 0) entries[duplicateIndex] = ownUser;
+        else entries.unshift(ownUser);
+        replaceTurn(existingRunTurn, { ...existingRunTurn, entries });
+        turns = turns.filter((candidate) => candidate !== ownTurn);
+        schedule(true);
+        return;
+      }
       let next = adoptRun(ownTurn, runId);
       if (!next.user) {
         next = {
@@ -539,7 +571,8 @@ export function createTranscriptStore(options?: {
       return;
     }
 
-    // (2) The run already has a turn: fill the single user slot iff empty.
+    // (2) The run already has a turn: keep the first user as the anchor and
+    // append later distinct user_message ids at their stream position.
     const runTurn = findTurnByRunId(runId);
     if (runTurn) {
       if (!runTurn.user) {
@@ -556,12 +589,34 @@ export function createTranscriptStore(options?: {
           },
         });
         schedule(true);
-      } else {
+      } else if (
+        !messageId ||
+        messageId === runTurn.user.messageId ||
+        (!runTurn.user.messageId && runTurn.user.text.trim() === text.trim())
+      ) {
         const boundUser = bindUserIdentity(runTurn.user);
         if (boundUser !== runTurn.user) {
           replaceTurn(runTurn, { ...runTurn, user: boundUser });
           schedule(true);
         }
+      } else {
+        const existingIndex = runTurn.entries.findIndex(
+          (entry) => entry.kind === "user" && entry.messageId === messageId,
+        );
+        const nextEntry: UserChatEntry = {
+          id: existingIndex >= 0 ? runTurn.entries[existingIndex].id : `r:${runId}:u:${messageId}`,
+          kind: "user",
+          text,
+          attachments,
+          messageId,
+          messageRef,
+          timestamp: Date.now(),
+        };
+        const entries = runTurn.entries.slice();
+        if (existingIndex >= 0) entries[existingIndex] = nextEntry;
+        else entries.push(nextEntry);
+        replaceTurn(runTurn, { ...runTurn, entries });
+        schedule(true);
       }
       return;
     }
