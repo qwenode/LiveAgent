@@ -44,3 +44,12 @@ test("both hosts provide localized deferred-content loading copy", () => {
     assert.equal(translations.match(/"settings\.skillsHubPreparingDesc":/g)?.length, 2);
   }
 });
+
+test("Skills preview drawers defer heavy content until after the local enter animation", () => {
+  assert.match(source, /const SKILLS_DRAWER_ENTER_MS = 340;/);
+  assert.match(source, /window\.matchMedia\("\(prefers-reduced-motion: reduce\)"\)/);
+  assert.match(source, /const contentReady = useSkillsDrawerContentReady\(\);/);
+  assert.match(source, /preview\.loading \|\| !contentReady/);
+  assert.match(source, /loading \|\| !contentReady/);
+  assert.match(source, /const previewContent = useMemo\(/);
+});

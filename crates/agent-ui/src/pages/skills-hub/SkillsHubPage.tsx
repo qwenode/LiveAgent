@@ -157,6 +157,27 @@ const INSTALLED_SORT_OPTIONS: Array<{ value: InstalledSkillSort; labelKey: strin
   { value: "installed-desc", labelKey: "settings.skillsInstalledSortNewest" },
 ];
 
+const SKILLS_DRAWER_ENTER_MS = 340;
+
+function useSkillsDrawerContentReady() {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const reducedMotion =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reducedMotion) {
+      setReady(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setReady(true), SKILLS_DRAWER_ENTER_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  return ready;
+}
+
 type StoreCategoryValue = "all" | ClawHubCategorySlug;
 
 // 图标与 ClawHub 官网分类侧边栏一一对应（layers/plug/zap/globe/wrench/…）。
@@ -3475,7 +3496,11 @@ function InstalledSkillPreviewDrawer(props: {
   const source = skill.source;
   const description = skill.description.trim();
   const previewIsMarkdown = /\.(md|mdx|markdown)$/i.test(skill.skillFile);
-  const previewContent = stripInstalledSkillPreviewMetadata(preview.content, skill);
+  const contentReady = useSkillsDrawerContentReady();
+  const previewContent = useMemo(
+    () => stripInstalledSkillPreviewMetadata(preview.content, skill),
+    [preview.content, skill],
+  );
   const statusLabel = alwaysEnabled
     ? t("settings.skillsInstalledPreviewBuiltIn")
     : checked
@@ -3658,7 +3683,7 @@ function InstalledSkillPreviewDrawer(props: {
                 </div>
               </div>
 
-              {preview.loading ? (
+              {preview.loading || !contentReady ? (
                 <InstalledPreviewSkeleton />
               ) : (
                 <>
@@ -4376,6 +4401,7 @@ function SkillsStorePreviewDrawer(props: {
     : installState.done
       ? t("settings.skillsStoreInstalled")
       : t("settings.skillsStoreInstall");
+  const contentReady = useSkillsDrawerContentReady();
 
   const [closing, setClosing] = useState(false);
   const closeTimerRef = useRef<number | null>(null);
@@ -4515,7 +4541,7 @@ function SkillsStorePreviewDrawer(props: {
               </div>
             ) : null}
 
-            {loading ? (
+            {loading || !contentReady ? (
               <StorePreviewSkeleton />
             ) : (
               <>
