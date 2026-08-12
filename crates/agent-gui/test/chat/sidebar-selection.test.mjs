@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { createTsModuleLoader } from "../helpers/load-ts-module.mjs";
@@ -125,4 +126,22 @@ test("a stop request halts the batch and reports the rest as skipped", async () 
   assert.deepEqual(result.deletedIds, ["one"]);
   assert.deepEqual(result.failedIds, []);
   assert.deepEqual(result.skippedIds, ["two", "three"]);
+});
+
+test("menu rename suppresses the menu return-focus without changing double-click rename", () => {
+  const source = readFileSync(
+    new URL("../../../agent-ui/src/components/chat/ChatHistorySidebar.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.equal((source.match(/suppressMenuReturnFocusRef\.current = true;/g) ?? []).length, 2);
+  assert.equal((source.match(/onSelect=\{handleStartRenamingFromMenu\}/g) ?? []).length, 2);
+  assert.equal((source.match(/finalFocus=\{\(\) => \{/g) ?? []).length, 2);
+  assert.equal(
+    (source.match(/suppressMenuReturnFocusRef\.current = false;\s*return false;/g) ?? [])
+      .length,
+    2,
+  );
+  assert.match(source, /onDoubleClick=\{\(event\) => \{[\s\S]*?handleStartRenaming\(\);/);
+  assert.doesNotMatch(source, /ignoreMenuCloseBlurRef/);
 });

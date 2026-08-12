@@ -369,6 +369,10 @@ const HistoryRow = memo(function HistoryRow(props: HistoryRowProps) {
   // Enter/Escape mark the blur as handled so onBlur commits exactly once —
   // symmetric with ProjectRow's skipNextBlurCommitRef.
   const skipNextBlurCommitRef = useRef(false);
+  // Renaming from the menu unmounts the whole dropdown in the commit that
+  // mounts the rename input. Base UI may otherwise return focus to the
+  // trigger before the input ref attaches, causing an immediate blur/commit.
+  const suppressMenuReturnFocusRef = useRef(false);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
   const longPressTriggeredRef = useRef(false);
@@ -407,6 +411,14 @@ const HistoryRow = memo(function HistoryRow(props: HistoryRowProps) {
     if (isInteractionDisabled) {
       return;
     }
+    onStartRenaming(item);
+  }, [isInteractionDisabled, item, onStartRenaming]);
+
+  const handleStartRenamingFromMenu = useCallback(() => {
+    if (isInteractionDisabled) {
+      return;
+    }
+    suppressMenuReturnFocusRef.current = true;
     onStartRenaming(item);
   }, [isInteractionDisabled, item, onStartRenaming]);
 
@@ -911,6 +923,13 @@ const HistoryRow = memo(function HistoryRow(props: HistoryRowProps) {
                 align="start"
                 sideOffset={8}
                 collisionPadding={12}
+                finalFocus={() => {
+                  if (suppressMenuReturnFocusRef.current) {
+                    suppressMenuReturnFocusRef.current = false;
+                    return false;
+                  }
+                  return true;
+                }}
                 className="sidebar-context-menu min-w-[10rem] rounded-xl border-border/60 bg-background/95 backdrop-blur-xl"
               >
                 {isMobileMenuLayout && !item.isPending ? (
@@ -937,7 +956,7 @@ const HistoryRow = memo(function HistoryRow(props: HistoryRowProps) {
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={isInteractionDisabled || isRunning || isBusy}
-                  onSelect={handleStartRenaming}
+                  onSelect={handleStartRenamingFromMenu}
                   className="gap-2"
                 >
                   <Edit3 className="h-3.5 w-3.5" />
@@ -1064,6 +1083,9 @@ const ProjectRow = memo(function ProjectRow(props: {
   const rowRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const skipNextBlurCommitRef = useRef(false);
+  // Keep the rename input focused when the menu action unmounts Base UI's
+  // popup before the input ref is attached.
+  const suppressMenuReturnFocusRef = useRef(false);
   const projectClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDefaultProject = project.id === DEFAULT_WORKSPACE_PROJECT_ID;
   const isPinned = project.isPinned === true;
@@ -1145,6 +1167,14 @@ const ProjectRow = memo(function ProjectRow(props: {
       project,
     ],
   );
+
+  const handleStartRenamingFromMenu = useCallback(() => {
+    if (isInteractionDisabled) {
+      return;
+    }
+    suppressMenuReturnFocusRef.current = true;
+    onStartRenamingProject(project);
+  }, [isInteractionDisabled, onStartRenamingProject, project]);
 
   const handleRequestRemove = useCallback(() => {
     if (isInteractionDisabled) {
@@ -1492,6 +1522,13 @@ const ProjectRow = memo(function ProjectRow(props: {
                     side="right"
                     align="start"
                     sideOffset={6}
+                    finalFocus={() => {
+                      if (suppressMenuReturnFocusRef.current) {
+                        suppressMenuReturnFocusRef.current = false;
+                        return false;
+                      }
+                      return true;
+                    }}
                     className="sidebar-context-menu"
                   >
                     <DropdownMenuItem
@@ -1506,7 +1543,7 @@ const ProjectRow = memo(function ProjectRow(props: {
                       <>
                         <DropdownMenuItem
                           disabled={isInteractionDisabled}
-                          onSelect={() => onStartRenamingProject(project)}
+                          onSelect={handleStartRenamingFromMenu}
                           className="gap-2"
                         >
                           <Edit3 className="h-3.5 w-3.5" />
