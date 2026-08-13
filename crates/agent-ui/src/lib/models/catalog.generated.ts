@@ -22,7 +22,7 @@ export type CatalogModelEntry = {
 
 export type CatalogProviderId = "anthropic" | "google" | "openai" | "xai" | "deepseek" | "zhipuai" | "moonshotai" | "minimax" | "stepfun" | "xiaomi" | "longcat" | "alibaba" | "tencent";
 
-export const MODEL_CATALOG_SNAPSHOT_DATE = "2026-08-10";
+export const MODEL_CATALOG_SNAPSHOT_DATE = "2026-08-13";
 
 export const MODEL_CATALOG: Record<CatalogProviderId, readonly CatalogModelEntry[]> = {
   anthropic: [
@@ -43,8 +43,6 @@ export const MODEL_CATALOG: Record<CatalogProviderId, readonly CatalogModelEntry
   google: [
     { id: "deep-research-max-preview-04-2026", contextWindow: 131072, maxOutputToken: 65536, thinking: { levels: [], off: false } },
     { id: "deep-research-preview-04-2026", contextWindow: 131072, maxOutputToken: 65536, thinking: { levels: [], off: false } },
-    { id: "gemini-2.0-flash", contextWindow: 1048576, maxOutputToken: 8192 },
-    { id: "gemini-2.0-flash-lite", contextWindow: 1048576, maxOutputToken: 8192 },
     { id: "gemini-2.5-computer-use-preview-10-2025", contextWindow: 131072, maxOutputToken: 65536, thinking: { levels: [], off: false } },
     { id: "gemini-2.5-flash", contextWindow: 1048576, maxOutputToken: 65536, thinking: { levels: ["minimal", "low", "medium", "high"], off: true } },
     { id: "gemini-2.5-flash-image", contextWindow: 32768, maxOutputToken: 8192, thinking: { levels: [], off: false } },
@@ -53,7 +51,6 @@ export const MODEL_CATALOG: Record<CatalogProviderId, readonly CatalogModelEntry
     { id: "gemini-3-flash-preview", contextWindow: 1048576, maxOutputToken: 65536, thinking: { levels: ["minimal", "low", "medium", "high"], off: false } },
     { id: "gemini-3-pro-image", contextWindow: 131072, maxOutputToken: 32768, thinking: { levels: ["low", "high"], off: false } },
     { id: "gemini-3-pro-image-preview", contextWindow: 131072, maxOutputToken: 32768, thinking: { levels: [], off: false } },
-    { id: "gemini-3-pro-preview", contextWindow: 1048576, maxOutputToken: 65536, thinking: { levels: ["low", "high"], off: false } },
     { id: "gemini-3.1-flash-image", contextWindow: 65536, maxOutputToken: 16384, thinking: { levels: ["minimal", "high"], off: false } },
     { id: "gemini-3.1-flash-image-preview", contextWindow: 65536, maxOutputToken: 16384, thinking: { levels: ["minimal", "high"], off: false } },
     { id: "gemini-3.1-flash-lite", contextWindow: 1048576, maxOutputToken: 65536, thinking: { levels: ["minimal", "low", "medium", "high"], off: false } },
@@ -126,6 +123,7 @@ export const MODEL_CATALOG: Record<CatalogProviderId, readonly CatalogModelEntry
     { id: "grok-4.20-multi-agent-0309", contextWindow: 1000000, maxOutputToken: 30000, thinking: { levels: ["low", "medium", "high", "xhigh"], off: false } },
     { id: "grok-4.3", contextWindow: 1000000, maxOutputToken: 30000, thinking: { levels: ["low", "medium", "high"], off: true } },
     { id: "grok-4.5", contextWindow: 500000, maxOutputToken: 32000, thinking: { levels: ["low", "medium", "high"], off: false } },
+    { id: "grok-4.6", contextWindow: 500000, maxOutputToken: 32000, thinking: { levels: ["low", "medium", "high", "xhigh"], off: false } },
     { id: "grok-build-0.1", contextWindow: 256000, maxOutputToken: 32000, thinking: { levels: [], off: false } },
   ],
   deepseek: [
