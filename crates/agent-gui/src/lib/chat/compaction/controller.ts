@@ -351,7 +351,7 @@ export class CompactionController {
     } finally {
       scope.release();
       this.inFlight = false;
-      this.binding?.sinks.setBridgeToolStatus?.(null);
+      this.binding?.sinks.setBridgeToolStatus?.(null, false);
     }
   }
 
@@ -537,7 +537,7 @@ export class CompactionController {
     } finally {
       scope.release();
       this.inFlight = false;
-      this.binding?.sinks.setBridgeToolStatus?.(null);
+      this.binding?.sinks.setBridgeToolStatus?.(null, false);
     }
   }
 

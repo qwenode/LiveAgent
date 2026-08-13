@@ -59,6 +59,7 @@ pub struct GatewayChatMessageRefEvent {
 #[serde(rename_all = "camelCase")]
 pub struct GatewayChatRequestEvent {
     pub request_id: String,
+    pub command_type: String,
     pub conversation_id: String,
     pub client_request_id: String,
     pub message: String,

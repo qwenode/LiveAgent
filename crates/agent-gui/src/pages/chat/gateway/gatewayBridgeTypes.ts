@@ -21,6 +21,7 @@ export type GatewayChatRuntimeControlsEvent = Pick<
 
 export type GatewayChatRequestEvent = {
   requestId: string;
+  commandType?: "chat.submit" | "chat.edit_resend" | "chat.compact" | string;
   conversationId: string;
   clientRequestId?: string;
   message: string;

@@ -17,10 +17,17 @@ import {
 } from "./conversationContextBuilders";
 import { resolveEffectiveChatModelSelection } from "./modelSelection";
 import type { PersistConversationParams } from "../history/useConversationHistoryActions";
+import type { GatewayBridgeEventController } from "../../../lib/chat/conversation/run/gatewayBridgeEvents";
 
 export type ManualCompactionResult = {
   status: "compacted" | "failed" | "busy" | "skipped";
   message?: string;
+  reason?: "cancelled";
+};
+
+export type ManualCompactionRunOptions = {
+  conversationId?: string;
+  bridge?: Pick<GatewayBridgeEventController, "queueToolStatus" | "queueCheckpoint" | "close">;
 };
 
 type StopHandler = (options: { force: boolean; requestVersion: number }) => void;
@@ -55,7 +62,7 @@ function mapOutcome(
       return { status: "skipped", message: manualSkipMessage(t, outcome.reason) };
     case "failed":
       return outcome.aborted
-        ? { status: "skipped", message: t("chat.manualCompactCancelled") }
+        ? { status: "skipped", message: t("chat.manualCompactCancelled"), reason: "cancelled" }
         : { status: "failed", message: failureMessage || t("chat.manualCompactFailed") };
   }
 }
@@ -81,6 +88,7 @@ export function useManualCompaction(params: {
   buildRuntimeEntryFromVisibleState: () => ConversationRuntimeEntry;
   getCompactionController: (conversationId: string) => CompactionController;
   getConversationLiveTranscriptStore: (conversationId: string) => LiveTranscriptStore;
+  getConversationRuntimeEntry?: (conversationId: string) => ConversationRuntimeEntry | undefined;
   updateConversationRuntimeEntry: (
     conversationId: string,
     updater: (prev: ConversationRuntimeEntry) => ConversationRuntimeEntry,
@@ -104,6 +112,7 @@ export function useManualCompaction(params: {
     buildRuntimeEntryFromVisibleState,
     getCompactionController,
     getConversationLiveTranscriptStore,
+    getConversationRuntimeEntry,
     updateConversationRuntimeEntry,
     resetLiveTranscript,
     updateToolStatus,
@@ -112,8 +121,9 @@ export function useManualCompaction(params: {
     resolvePromptInputs,
   } = params;
 
-  return useCallback(async (): Promise<ManualCompactionResult> => {
-    const conversationId = currentConversationIdRef.current.trim();
+  return useCallback(async (options?: ManualCompactionRunOptions): Promise<ManualCompactionResult> => {
+    const conversationId =
+      options?.conversationId?.trim() || currentConversationIdRef.current.trim();
     if (!conversationId) {
       return { status: "skipped", message: t("chat.manualCompactRejected") };
     }
@@ -121,7 +131,14 @@ export function useManualCompaction(params: {
       return { status: "busy", message: t("chat.manualCompactRejected") };
     }
 
-    const runtimeEntry = buildRuntimeEntryFromVisibleState();
+    const runtimeEntry =
+      params.getConversationRuntimeEntry?.(conversationId) ??
+      (conversationId === currentConversationIdRef.current.trim()
+        ? buildRuntimeEntryFromVisibleState()
+        : undefined);
+    if (!runtimeEntry) {
+      return { status: "failed", message: t("chat.manualCompactUnavailable") };
+    }
     const transcriptStore = getConversationLiveTranscriptStore(conversationId);
     let effective: ReturnType<typeof resolveEffectiveChatModelSelection>;
     try {
@@ -179,9 +196,10 @@ export function useManualCompaction(params: {
       },
       setBridgeToolStatus: (status, isCompaction = false) => {
         updateToolStatus(status, transcriptStore);
-        // The local bridge sink has no second state source; the flag is
-        // intentionally consumed only by the existing transcript/tool-status path.
-        void isCompaction;
+        options?.bridge?.queueToolStatus(status, isCompaction);
+      },
+      queueCheckpoint: (state, contextUsageTokens) => {
+        options?.bridge?.queueCheckpoint(state, contextUsageTokens);
       },
       persist: persistState,
       persistRollback: persistState,
@@ -247,6 +265,7 @@ export function useManualCompaction(params: {
     currentConversationIdRef,
     getCompactionController,
     getConversationLiveTranscriptStore,
+    getConversationRuntimeEntry,
     isConversationRunning,
     persistConversation,
     resetLiveTranscript,

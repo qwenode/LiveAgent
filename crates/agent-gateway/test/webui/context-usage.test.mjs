@@ -31,6 +31,22 @@ test("GatewayApp passes context usage data to the shared composer ring", () => {
   assert.match(source, /contextWindow=\{currentModelContextWindow\}/);
 });
 
+test("GatewayApp wires the read-only ring and manual compact command in every execution mode", () => {
+  const source = readFileSync(
+    fileURLToPath(new URL("../../web/src/app/GatewayApp.tsx", import.meta.url)),
+    "utf8",
+  );
+  assert.match(source, /contextUsageTokens=\{gatewayContextUsageTokens\}/);
+  assert.match(source, /contextWindow=\{currentModelContextWindow\}/);
+  assert.match(source, /onManualCompactConfirm=\{handleManualCompact\}/);
+  assert.match(source, /commandType: "chat\.compact"/);
+  assert.match(source, /const composerRuntimeDisabled =/);
+  assert.match(source, /const composerInputDisabled = composerRuntimeDisabled/);
+  assert.match(source, /: transcriptToolStatusIsCompaction\s*\? translate\("chat\.compactingContextWait"/);
+  assert.doesNotMatch(source, /isAgentDevExecutionMode\s*\?\s*handleManualCompact/);
+  assert.doesNotMatch(source, /const composerInputDisabled =[\s\S]{0,180}composerCompactionBlocked;/);
+});
+
 test("Gateway context usage ignores non-finite or missing usage", () => {
   assert.equal(
     usage.deriveGatewayContextUsageTokens([

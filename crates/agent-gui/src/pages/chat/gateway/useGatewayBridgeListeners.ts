@@ -3,6 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef } from "react";
 import type { HistoryMessageRef } from "../../../lib/chat/conversation/conversationState";
+import { createGatewayBridgeEventController } from "../../../lib/chat/conversation/run/gatewayBridgeEvents";
+import type { ManualCompactionResult, ManualCompactionRunOptions } from "../runtime/useManualCompaction";
+import type { FinishGatewayRunMirrorInput } from "./useGatewayRunMirrorCoordinator";
 import { normalizeChatRuntimeControls } from "../../../lib/settings";
 import {
   type ActiveGatewayBridgeRequest,
@@ -20,6 +23,8 @@ type UseGatewayBridgeListenersParams = GatewayBridgeRuntimeRefs & {
     event: Record<string, unknown>,
     options?: { workerId?: string },
   ) => Promise<void> | void;
+  flushGatewayBridgeEventsForRequest: (requestId: string) => Promise<void>;
+  finishGatewayRunMirror: (input: FinishGatewayRunMirrorInput) => Promise<void>;
   shouldQueueGatewayChatRequest: (
     conversationId: string,
     queuePolicy: "auto" | "append" | "interrupt" | "steer",
@@ -33,6 +38,7 @@ type UseGatewayBridgeListenersParams = GatewayBridgeRuntimeRefs & {
   requestConversationStop: (conversationId: string) => boolean;
   requestActiveConversationStop: (conversationId: string, options: { force: boolean }) => boolean;
   consumeConversationStop: (conversationId: string, expectedVersion?: number) => boolean;
+  runManualCompaction: (options?: ManualCompactionRunOptions) => Promise<ManualCompactionResult>;
 };
 
 type GatewayBridgeRequestRegistry = {
@@ -353,24 +359,39 @@ export function useGatewayBridgeListeners(params: UseGatewayBridgeListenersParam
       const payload = claimed.request;
       const requestId = payload.requestId.trim();
       const clientRequestId = payload.clientRequestId?.trim() ?? "";
+      const commandType = payload.commandType?.trim() || "chat.submit";
+      const isCompactCommand = commandType === "chat.compact";
       const message = payload.message.trim();
       const uploadedFiles = Array.isArray(payload.uploadedFiles) ? payload.uploadedFiles : [];
       const targetConversationId = payload.conversationId.trim();
       const queuePolicy = normalizeQueuePolicy(payload.queuePolicy);
       let resolvedConversationId = targetConversationId;
       let gatewayBridgeRequest: ActiveGatewayBridgeRequest | null = null;
+      let compactBridge: ReturnType<typeof createGatewayBridgeEventController> | null = null;
+      let compactStarted = false;
+      let compactTerminalized = false;
       let claimedRequest = false;
 
       if (!requestId) {
         return;
       }
       startHeartbeat(requestId);
-      if (!message && uploadedFiles.length === 0) {
+      if (!isCompactCommand && !message && uploadedFiles.length === 0) {
         failClaimedRequest(
           requestId,
           targetConversationId,
           "empty_remote_message",
           "Remote chat message cannot be empty.",
+        );
+        stopHeartbeat(requestId);
+        return;
+      }
+      if (isCompactCommand && !targetConversationId) {
+        failClaimedRequest(
+          requestId,
+          targetConversationId,
+          "invalid_chat_command",
+          "Remote compact command requires a conversation.",
         );
         stopHeartbeat(requestId);
         return;
@@ -382,6 +403,16 @@ export function useGatewayBridgeListeners(params: UseGatewayBridgeListenersParam
       );
       if (claimResult !== "claimed") {
         if (claimResult === "conversation_busy") {
+          if (isCompactCommand) {
+            failClaimedRequest(
+              requestId,
+              targetConversationId,
+              "conversation_busy",
+              GATEWAY_CHAT_CONVERSATION_BUSY_MESSAGE,
+            );
+            stopHeartbeat(requestId);
+            return;
+          }
           if (targetConversationId) {
             try {
               if (await markQueuedInGui(claimed, targetConversationId)) {
@@ -422,13 +453,14 @@ export function useGatewayBridgeListeners(params: UseGatewayBridgeListenersParam
           payload.rebased === true
             ? normalizeGatewayBaseMessageRef(payload.baseMessageRef)
             : undefined;
-        if (payload.rebased === true && !baseMessageRef) {
+        if (!isCompactCommand && payload.rebased === true && !baseMessageRef) {
           const message = "Remote edit_resend command is missing base_message_ref.";
           failClaimedRequest(requestId, targetConversationId, "invalid_chat_command", message);
           return;
         }
 
         if (
+          !isCompactCommand &&
           targetConversationId &&
           payload.rebased !== true &&
           (latestParamsRef.current.shouldQueueGatewayChatRequest(
@@ -457,14 +489,33 @@ export function useGatewayBridgeListeners(params: UseGatewayBridgeListenersParam
           (clientRequestId
             ? getActiveGatewayBridgeRequestByClientRequestId(clientRequestId)
             : null);
+        const resolvedConversationBusy =
+          Boolean(runningRequest) ||
+          latestParamsRef.current.isConversationRunning(resolvedConversationId) ||
+          Boolean(latestParamsRef.current.getConversationAbortController(resolvedConversationId));
         if (
-          latestParamsRef.current.shouldQueueGatewayChatRequest(
+          isCompactCommand &&
+          (resolvedConversationBusy ||
+            latestParamsRef.current.shouldQueueGatewayChatRequest(
+              resolvedConversationId,
+              queuePolicy,
+            ))
+        ) {
+          failClaimedRequest(
+            requestId,
+            resolvedConversationId,
+            "conversation_busy",
+            GATEWAY_CHAT_CONVERSATION_BUSY_MESSAGE,
+          );
+          return;
+        }
+        if (
+          !isCompactCommand &&
+          (latestParamsRef.current.shouldQueueGatewayChatRequest(
             resolvedConversationId,
             queuePolicy,
           ) ||
-          runningRequest ||
-          latestParamsRef.current.isConversationRunning(resolvedConversationId) ||
-          latestParamsRef.current.getConversationAbortController(resolvedConversationId)
+            resolvedConversationBusy)
         ) {
           if (
             await markQueuedInGui(claimed, runningRequest?.conversationId || resolvedConversationId)
@@ -496,6 +547,72 @@ export function useGatewayBridgeListeners(params: UseGatewayBridgeListenersParam
             worker_id: workerId,
           } as any);
         };
+        if (isCompactCommand) {
+          await markRuntimeStarted();
+          compactStarted = true;
+          const bridge = createGatewayBridgeEventController({
+            conversationId: resolvedConversationId,
+            requestId,
+            workerId,
+            enabled: true,
+            sendEvent: latestParamsRef.current.queueGatewayBridgeEventForRequest,
+            flushEvents: latestParamsRef.current.flushGatewayBridgeEventsForRequest,
+            resolveErrorConversationId: () => resolvedConversationId,
+          });
+          compactBridge = bridge;
+          const finishCompactRun = async (
+            state: FinishGatewayRunMirrorInput["state"],
+            options?: { errorCode?: string; errorMessage?: string },
+          ) => {
+            if (compactTerminalized) return;
+            await bridge.close();
+            await latestParamsRef.current.finishGatewayRunMirror({
+              runId: requestId,
+              conversationId: resolvedConversationId,
+              entriesJson: "[]",
+              state,
+              errorCode: options?.errorCode,
+              errorMessage: options?.errorMessage,
+              contentComplete: false,
+              historyRequired: true,
+            });
+            compactTerminalized = true;
+          };
+          const result = await latestParamsRef.current.runManualCompaction({
+            conversationId: resolvedConversationId,
+            bridge,
+          });
+          if (result.status === "compacted") {
+            await finishCompactRun("completed");
+            await invoke("gateway_chat_complete", {
+              request_id: requestId,
+              conversation_id: resolvedConversationId,
+              worker_id: workerId,
+            } as any);
+            return;
+          }
+          if (result.reason === "cancelled") {
+            await finishCompactRun("cancelled");
+            await invoke("gateway_chat_cancel_request", {
+              request_id: requestId,
+              conversation_id: resolvedConversationId,
+              worker_id: workerId,
+            } as any).catch((error) => {
+              console.warn("gateway_chat_cancel_request failed", error);
+            });
+            return;
+          }
+          const errorCode =
+            result.status === "busy"
+              ? "conversation_busy"
+              : result.status === "skipped"
+                ? "compact_skipped"
+                : "compact_failed";
+          const errorMessage = result.message || "Remote context compaction did not complete.";
+          await finishCompactRun("failed", { errorCode, errorMessage });
+          failClaimedRequest(requestId, resolvedConversationId, errorCode, errorMessage);
+          return;
+        }
         const accepted = await latestParamsRef.current.sendActionRef.current({
           textOverride: message,
           uploadedFilesOverride: uploadedFiles,
@@ -531,6 +648,24 @@ export function useGatewayBridgeListeners(params: UseGatewayBridgeListenersParam
         );
         const conversationBusy = isConversationAlreadyRunningError(rawMessage);
         const message = conversationBusy ? GATEWAY_CHAT_CONVERSATION_BUSY_MESSAGE : rawMessage;
+        if (isCompactCommand && compactStarted && compactBridge && !compactTerminalized) {
+          try {
+            await compactBridge.close();
+            await latestParamsRef.current.finishGatewayRunMirror({
+              runId: requestId,
+              conversationId: resolvedConversationId || targetConversationId,
+              entriesJson: "[]",
+              state: "failed",
+              errorCode: conversationBusy ? "conversation_busy" : "desktop_runtime_error",
+              errorMessage: message,
+              contentComplete: false,
+              historyRequired: true,
+            });
+            compactTerminalized = true;
+          } catch (terminalError) {
+            console.warn("gateway compact terminal mirror failed", terminalError);
+          }
+        }
         failClaimedRequest(
           requestId,
           resolvedConversationId ||

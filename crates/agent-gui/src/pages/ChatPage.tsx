@@ -526,6 +526,7 @@ export function ChatPage(props: ChatPageProps) {
     buildRuntimeEntryFromVisibleState,
     syncVisibleConversationRuntime,
     updateConversationRuntimeEntry,
+    getConversationRuntimeEntry,
     isConversationRunning,
     setConversationAbortController,
     getConversationAbortController,
@@ -1295,6 +1296,7 @@ export function ChatPage(props: ChatPageProps) {
     buildRuntimeEntryFromVisibleState,
     getCompactionController,
     getConversationLiveTranscriptStore,
+    getConversationRuntimeEntry,
     updateConversationRuntimeEntry,
     resetLiveTranscript,
     updateToolStatus,
@@ -1596,6 +1598,8 @@ export function ChatPage(props: ChatPageProps) {
     ensureGatewayBridgeConversationReadyRef,
     sendActionRef,
     queueGatewayBridgeEventForRequest,
+    flushGatewayBridgeEventsForRequest,
+    finishGatewayRunMirror,
     shouldQueueGatewayChatRequest,
     enqueueGatewayChatRequest,
     isConversationRunning,
@@ -1603,6 +1607,7 @@ export function ChatPage(props: ChatPageProps) {
     requestConversationStop,
     requestActiveConversationStop,
     consumeConversationStop,
+    runManualCompaction,
   });
 
   const { send } = useSendChatTurn({

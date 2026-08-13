@@ -29,8 +29,46 @@ impl GatewayController {
                         )
                         .await;
                 };
-                let event_payload =
-                    Self::build_gateway_chat_request_event(request_id, request, false, None);
+                let event_payload = Self::build_gateway_chat_request_event(
+                    request_id,
+                    request,
+                    false,
+                    None,
+                    "chat.submit",
+                );
+                self.enqueue_gateway_chat_request(event_payload).await
+            }
+            "chat.compact" => {
+                let Some(request) = command.request else {
+                    return self
+                        .send_gateway_chat_control_event_with_details(
+                            request_id,
+                            String::new(),
+                            "failed",
+                            "invalid_chat_command".to_string(),
+                            "chat.compact requires request payload".to_string(),
+                        )
+                        .await;
+                };
+                let conversation_id = request.conversation_id.trim().to_string();
+                if conversation_id.is_empty() {
+                    return self
+                        .send_gateway_chat_control_event_with_details(
+                            request_id,
+                            String::new(),
+                            "failed",
+                            "invalid_chat_command".to_string(),
+                            "chat.compact requires conversation_id".to_string(),
+                        )
+                        .await;
+                }
+                let event_payload = Self::build_gateway_chat_request_event(
+                    request_id,
+                    request,
+                    false,
+                    None,
+                    "chat.compact",
+                );
                 self.enqueue_gateway_chat_request(event_payload).await
             }
             "chat.edit_resend" => {
@@ -85,6 +123,7 @@ impl GatewayController {
                     request,
                     true,
                     Some(base_message_ref),
+                    "chat.edit_resend",
                 );
                 self.enqueue_gateway_chat_request(event_payload).await
             }
@@ -161,6 +200,7 @@ impl GatewayController {
         request: proto::ChatRequest,
         rebased: bool,
         base_message_ref: Option<proto::ChatMessageRef>,
+        command_type: &str,
     ) -> GatewayChatRequestEvent {
         let proto::ChatRequest {
             conversation_id,
@@ -197,6 +237,7 @@ impl GatewayController {
             });
         GatewayChatRequestEvent {
             request_id,
+            command_type: command_type.trim().to_string(),
             conversation_id,
             client_request_id,
             message,

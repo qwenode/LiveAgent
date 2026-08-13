@@ -57,8 +57,16 @@ func LogCommandSpan(
 	)
 }
 
-// NormalizeRequestBody 归一化并校验 chat 请求体（trim、默认值、必填项）。
+// NormalizeRequestBody 归一化并校验普通 chat.submit 请求体。
 func NormalizeRequestBody(body *handler.ChatRequestBody) error {
+	return NormalizeRequestBodyForCommand(body, "chat.submit")
+}
+
+// NormalizeRequestBodyForCommand 归一化并校验指定 chat 命令请求体。
+// chat.compact 是无用户消息的控制命令：它必须绑定已有会话，且不能携带
+// 文件、队列或 edit-resend 锚点（后者由协议层单独清理）。
+func NormalizeRequestBodyForCommand(body *handler.ChatRequestBody, commandType string) error {
+	commandType = strings.TrimSpace(commandType)
 	body.Message = strings.TrimSpace(body.Message)
 	body.ConversationID = strings.TrimSpace(body.ConversationID)
 	body.ClientRequestID = strings.TrimSpace(body.ClientRequestID)
@@ -74,6 +82,15 @@ func NormalizeRequestBody(body *handler.ChatRequestBody) error {
 	body.SelectedModel = selectedModel
 	if body.ClientRequestID == "" {
 		return errors.New("client_request_id is required")
+	}
+	if commandType == "chat.compact" {
+		if body.ConversationID == "" {
+			return errors.New("conversation_id is required for chat.compact")
+		}
+		body.Message = ""
+		body.UploadedFiles = nil
+		body.QueuePolicy = "auto"
+		return nil
 	}
 	if body.Message == "" && len(body.UploadedFiles) == 0 {
 		return errors.New("message is required")
@@ -101,6 +118,7 @@ func DispatchAcceptedCommand(
 	start session.ChatCommandStart,
 	body handler.ChatRequestBody,
 	baseMessageRef *MessageRef,
+	commandType string,
 	traceID string,
 ) {
 	if cleanupWatch != nil {
@@ -110,9 +128,12 @@ func DispatchAcceptedCommand(
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
-	commandType := "chat.submit"
-	if baseMessageRef != nil {
-		commandType = "chat.edit_resend"
+	commandType = strings.TrimSpace(commandType)
+	if commandType == "" {
+		commandType = "chat.submit"
+		if baseMessageRef != nil {
+			commandType = "chat.edit_resend"
+		}
 	}
 	if err := sm.SendToAgentContext(ctx, agentID, buildCommandEnvelope(start.RunID, commandType, body, baseMessageRef)); err != nil {
 		message := "chat command failed"
@@ -246,12 +267,25 @@ func DeliveryTimeout(cfg *config.Config) time.Duration {
 	return 5 * time.Second
 }
 
-// BuildAcceptedCommandPayloads 构造命令被接受时立即写入会话流的事件载荷
+// BuildAcceptedCommandPayloads 构造普通 chat 命令被接受时立即写入会话流的事件载荷
 // （edit_resend 先补一条 rebase 事件）。
 func BuildAcceptedCommandPayloads(
 	body handler.ChatRequestBody,
 	baseMessageRef *MessageRef,
 ) []map[string]any {
+	return BuildAcceptedCommandPayloadsForCommand(body, baseMessageRef, "chat.submit")
+}
+
+// BuildAcceptedCommandPayloadsForCommand 构造指定命令的接受载荷。
+// chat.compact 是控制命令，严禁向 transcript 注入 user_message 或 rebase。
+func BuildAcceptedCommandPayloadsForCommand(
+	body handler.ChatRequestBody,
+	baseMessageRef *MessageRef,
+	commandType string,
+) []map[string]any {
+	if strings.TrimSpace(commandType) == "chat.compact" {
+		return nil
+	}
 	payloads := make([]map[string]any, 0, 2)
 	if baseMessageRef != nil {
 		payloads = append(payloads, map[string]any{

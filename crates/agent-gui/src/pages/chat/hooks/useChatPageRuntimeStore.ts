@@ -221,6 +221,11 @@ export function useChatPageRuntimeStore(params: UseChatPageRuntimeStoreParams) {
     [ensureConversationRuntimeEntry, syncVisibleConversationRuntime],
   );
 
+  const getConversationRuntimeEntry = useCallback(
+    (conversationId: string) => conversationRuntimeCacheRef.current.get(conversationId.trim()),
+    [],
+  );
+
   const isConversationRunning = useCallback((conversationId: string) => {
     return runningConversationIdsRef.current.has(conversationId.trim());
   }, []);
@@ -504,6 +509,7 @@ export function useChatPageRuntimeStore(params: UseChatPageRuntimeStoreParams) {
     syncVisibleConversationRuntime,
     ensureConversationRuntimeEntry,
     updateConversationRuntimeEntry,
+    getConversationRuntimeEntry,
     isConversationRunning,
     setConversationAbortController,
     getConversationAbortController,

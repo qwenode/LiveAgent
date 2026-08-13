@@ -7,6 +7,7 @@ export type OverlayState = "closed" | "entering" | "open" | "leaving";
 
 export type SendChatOptions = {
   conversationId?: string;
+  commandType?: "chat.submit" | "chat.edit_resend" | "chat.compact";
   clientRequestId?: string;
   uploadedFiles?: PendingUploadedFile[];
   runtimeControls?: ChatRuntimeControls;

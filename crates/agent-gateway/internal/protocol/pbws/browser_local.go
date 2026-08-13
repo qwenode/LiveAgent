@@ -111,7 +111,7 @@ func (c *browserConn) handleChatActivities(requestID string) {
 	})
 }
 
-// handleChatCommand 处理 chat.command：submit / edit_resend 经网关编排
+// handleChatCommand 处理 chat.command：submit / edit_resend / compact 经网关编排
 // （去重、接受即回执、命令更新观察、启动看门狗、投递），cancel 单独处理。
 // agentID 是已由分派层校验过的显式目标 Agent。
 func (c *browserConn) handleChatCommand(requestID, agentID string, cmd *gatewayv2.ChatCommandRequest) {
@@ -122,6 +122,14 @@ func (c *browserConn) handleChatCommand(requestID, agentID string, cmd *gatewayv
 	switch commandType {
 	case "chat.submit":
 		baseMessageRef = nil
+	case "chat.compact":
+		if baseMessageRef != nil {
+			_ = c.sendLocalError(requestID, "chat.compact does not accept base_message_ref")
+			return
+		}
+		body.Message = ""
+		body.UploadedFiles = nil
+		body.QueuePolicy = "auto"
 	case "chat.edit_resend":
 		if baseMessageRef == nil {
 			_ = c.sendLocalError(requestID, "base_message_ref is required")
@@ -139,7 +147,7 @@ func (c *browserConn) handleChatCommand(requestID, agentID string, cmd *gatewayv
 		return
 	}
 
-	if err := chatcmd.NormalizeRequestBody(&body); err != nil {
+	if err := chatcmd.NormalizeRequestBodyForCommand(&body, commandType); err != nil {
 		_ = c.sendLocalError(requestID, err.Error())
 		return
 	}
@@ -170,7 +178,7 @@ func (c *browserConn) handleChatCommand(requestID, agentID string, cmd *gatewayv
 		body.ConversationID,
 		body.Workdir,
 		body.ClientRequestID,
-		chatcmd.BuildAcceptedCommandPayloads(body, baseMessageRef),
+		chatcmd.BuildAcceptedCommandPayloadsForCommand(body, baseMessageRef, commandType),
 	)
 	if start.Deduped {
 		c.respondChatCommandDeduped(requestID, start)
@@ -182,7 +190,7 @@ func (c *browserConn) handleChatCommand(requestID, agentID string, cmd *gatewayv
 
 	go c.forwardChatCommandUpdates(updates, cleanupWatch)
 	go chatcmd.DispatchAcceptedCommand(
-		context.Background(), c.cfg, c.sm, agentID, cleanupWatch, start, body, baseMessageRef, chatcmd.NewTraceID(),
+		context.Background(), c.cfg, c.sm, agentID, cleanupWatch, start, body, baseMessageRef, commandType, chatcmd.NewTraceID(),
 	)
 }
 

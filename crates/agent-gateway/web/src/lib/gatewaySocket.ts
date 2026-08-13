@@ -122,7 +122,7 @@ type GatewayChatSystemSettings = {
 };
 
 export type GatewayChatCommandInput = {
-  type: "chat.submit" | "chat.edit_resend";
+  type: "chat.submit" | "chat.edit_resend" | "chat.compact";
   message: string;
   conversationId?: string;
   selectedModel?: GatewaySelectedModel;
@@ -600,22 +600,24 @@ function createChatClientRequestId(input: GatewayChatCommandInput) {
 function buildChatCommandPayload(input: GatewayChatCommandInput) {
   const systemSettings = input.systemSettings;
   const clientRequestId = input.clientRequestId?.trim() || createChatClientRequestId(input);
+  const isCompact = input.type === "chat.compact";
   return {
     type: input.type,
     payload: {
-      message: input.message,
+      message: isCompact ? "" : input.message,
       conversation_id: input.conversationId ?? "",
       client_request_id: clientRequestId,
       execution_mode: systemSettings?.executionMode?.trim() || "text",
       workdir: systemSettings?.workdir?.trim() || "",
-      uploaded_files:
-        input.uploadedFiles?.map((file) => ({
-          relative_path: file.relativePath,
-          absolute_path: file.absolutePath,
-          file_name: file.fileName,
-          kind: file.kind,
-          size_bytes: file.sizeBytes,
-        })) ?? [],
+      uploaded_files: isCompact
+        ? []
+        : input.uploadedFiles?.map((file) => ({
+            relative_path: file.relativePath,
+            absolute_path: file.absolutePath,
+            file_name: file.fileName,
+            kind: file.kind,
+            size_bytes: file.sizeBytes,
+          })) ?? [],
       selected_model: input.selectedModel
         ? {
             custom_provider_id: input.selectedModel.customProviderId,
@@ -630,12 +632,13 @@ function buildChatCommandPayload(input: GatewayChatCommandInput) {
             reasoning: input.runtimeControls.reasoning,
           }
         : undefined,
-      queue_policy: input.queuePolicy ?? "auto",
+      queue_policy: isCompact ? "auto" : input.queuePolicy ?? "auto",
       skill_preset_id: input.skillPresetId?.trim() || "default",
       skills_disabled: input.skillsDisabled === true,
-      base_message_ref: input.baseMessageRef
-        ? buildHistoryMessageRefPayload(input.baseMessageRef)
-        : undefined,
+      base_message_ref:
+        !isCompact && input.baseMessageRef
+          ? buildHistoryMessageRefPayload(input.baseMessageRef)
+          : undefined,
     },
   };
 }

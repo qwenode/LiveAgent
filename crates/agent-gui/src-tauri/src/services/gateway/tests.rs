@@ -70,6 +70,7 @@ fn gateway_chat_request(
 ) -> GatewayChatRequestEvent {
     GatewayChatRequestEvent {
         request_id: request_id.to_string(),
+        command_type: "chat.submit".to_string(),
         conversation_id: conversation_id.to_string(),
         client_request_id: client_request_id.to_string(),
         message: message.to_string(),
@@ -128,9 +129,11 @@ fn gateway_chat_command_mapping_preserves_rebase_signal() {
             role: "user".to_string(),
             content_hash: "fnv1a32:00000000".to_string(),
         }),
+        "chat.edit_resend",
     );
 
     assert_eq!(event.request_id, "run-1");
+    assert_eq!(event.command_type, "chat.edit_resend");
     assert_eq!(event.conversation_id, "conversation-1");
     assert_eq!(event.client_request_id, "client-1");
     assert_eq!(event.message, "edited");

@@ -30,3 +30,24 @@ test("composer keeps manual compaction adjacent to the read-only ring behind con
   assert.match(composerSource, /right-12 top-1\/2/);
   assert.match(composerSource, /disabled=\{controlsDisabled \|\| isSending \|\| manualCompactBlocked\}/);
 });
+
+
+test("Gateway compact terminalizes through the reliable mirror before releasing the inbox request", () => {
+  const listenerSource = read("../../src/pages/chat/gateway/useGatewayBridgeListeners.ts");
+  const finishStart = listenerSource.indexOf("const finishCompactRun = async");
+  const finishEnd = listenerSource.indexOf("const result = await", finishStart);
+  const finishSource = listenerSource.slice(finishStart, finishEnd);
+
+  assert.ok(finishStart >= 0 && finishEnd > finishStart);
+  assert.match(finishSource, /entriesJson:\s*"\[\]"/);
+  assert.match(listenerSource, /finishCompactRun\("cancelled"\)/);
+  assert.ok(finishSource.indexOf("await bridge.close()") < finishSource.indexOf("finishGatewayRunMirror"));
+  assert.ok(
+    finishSource.indexOf("finishGatewayRunMirror") <
+      finishSource.indexOf("compactTerminalized = true"),
+  );
+  assert.ok(
+    listenerSource.indexOf('await finishCompactRun("completed")') <
+      listenerSource.indexOf('await invoke("gateway_chat_complete"'),
+  );
+});

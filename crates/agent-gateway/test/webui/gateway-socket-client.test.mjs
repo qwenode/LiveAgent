@@ -1358,6 +1358,47 @@ test("GatewayWebSocketClient chatCommand sends the command frame and parses the 
   resetGatewayWebSocketClient();
 });
 
+test("GatewayWebSocketClient chat.compact sends an empty non-optimistic command payload", async () => {
+  installBrowser();
+  const { codec, getGatewayWebSocketClient, resetGatewayWebSocketClient } = loadGatewaySocket();
+  resetGatewayWebSocketClient();
+
+  const client = getGatewayWebSocketClient("token");
+  const commandPromise = client.chatCommand({
+    type: "chat.compact",
+    message: "ignored",
+    conversationId: "conversation-compact",
+    clientRequestId: "compact-req-1",
+    queuePolicy: "append",
+    uploadedFiles: [
+      { relativePath: "ignored.txt", fileName: "ignored.txt", kind: "text", sizeBytes: 1 },
+    ],
+  });
+  const socket = await connectAndAuth(codec);
+  await waitFor(() => findFrame(codec, socket, "chatCommand"), "compact command frame");
+  const command = findFrame(codec, socket, "chatCommand");
+  assert.equal(command.json.chat_command.type, "chat.compact");
+  assert.equal(command.json.chat_command.request.message ?? "", "");
+  assert.equal(command.json.chat_command.request.conversation_id, "conversation-compact");
+  assert.equal(command.json.chat_command.request.client_request_id, "compact-req-1");
+  assert.equal(command.json.chat_command.request.queue_policy, "auto");
+  assert.deepEqual(command.json.chat_command.request.uploaded_files ?? [], []);
+  assert.equal(command.json.chat_command.request.base_message_ref, undefined);
+
+  socket.receiveBinary(
+    codec.encodeServerFrame({
+      request_id: command.requestId,
+      chat_accepted: {
+        run_id: "compact-run-1",
+        conversation_id: "conversation-compact",
+        accepted_seq: 2,
+      },
+    }),
+  );
+  assert.equal((await commandPromise).runId, "compact-run-1");
+  resetGatewayWebSocketClient();
+});
+
 test("GatewayWebSocketClient reconnects once and retries chatCommand with the same payload", async () => {
   installBrowser();
   const { codec, getGatewayWebSocketClient, resetGatewayWebSocketClient } = loadGatewaySocket();

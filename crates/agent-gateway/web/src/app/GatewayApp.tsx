@@ -2423,7 +2423,13 @@ export default function GatewayApp() {
     }
 
     const uploadedFiles = options?.uploadedFiles ?? [];
+    const commandType =
+      options?.commandType ?? (options?.editMessageRef ? "chat.edit_resend" : "chat.submit");
+    const isCompactCommand = commandType === "chat.compact";
     let activeConversationId = options?.conversationId?.trim() || conversationIdRef.current.trim();
+    if (isCompactCommand && (!activeConversationId || isLocalDraftConversationId(activeConversationId))) {
+      return null;
+    }
     if (!activeConversationId) {
       activeConversationId = createLocalDraftConversationId();
       conversationIdRef.current = activeConversationId;
@@ -2437,8 +2443,10 @@ export default function GatewayApp() {
       // conversations to the GUI queue instead.
       return null;
     }
-    sidebarStore.clearRunResult(activeConversationId);
-    clearCachedComposerDraft(activeConversationId);
+    if (!isCompactCommand) {
+      sidebarStore.clearRunResult(activeConversationId);
+      clearCachedComposerDraft(activeConversationId);
+    }
 
     const clientRequestId = options?.clientRequestId?.trim() || createUuid();
     const startedAt = Date.now();
@@ -2461,7 +2469,7 @@ export default function GatewayApp() {
       transcriptFollow.stickToBottom();
     }
     const turnSelectedModel = selectionForConversation(activeConversationId);
-    if (startedAsDraftConversation) {
+    if (startedAsDraftConversation && !isCompactCommand) {
       draftClientRequestsRef.current.set(clientRequestId, activeConversationId);
       // Optimistic pending sidebar row: survives authoritative reconciles
       // until a server upsert (post-bind) confirms the conversation.
@@ -2487,26 +2495,27 @@ export default function GatewayApp() {
       },
     );
     const commandInput: GatewayChatCommandInput = {
-      type: options?.editMessageRef ? "chat.edit_resend" : "chat.submit",
-      message,
-      conversationId: startedAsDraftConversation ? undefined : activeConversationId,
+      type: commandType,
+      message: isCompactCommand ? "" : message,
+      conversationId: startedAsDraftConversation && !isCompactCommand ? undefined : activeConversationId,
       selectedModel: buildGatewaySelectedModel(turnSelectedModel, activeProviders),
       systemSettings: buildGatewaySystemSettings(settings, effectiveWorkdir),
-      uploadedFiles,
+      uploadedFiles: isCompactCommand ? [] : uploadedFiles,
       clientRequestId,
       runtimeControls,
-      baseMessageRef: options?.editMessageRef,
-      queuePolicy: options?.queuePolicy ?? "auto",
+      baseMessageRef: isCompactCommand ? undefined : options?.editMessageRef,
+      queuePolicy: isCompactCommand ? "auto" : options?.queuePolicy ?? "auto",
     };
 
     const outcome = await chatCommandPipeline.submit({
       conversationId: activeConversationId,
       clientRequestId,
-      message,
-      attachments: uploadedFiles,
-      isEditResend: Boolean(options?.editMessageRef),
-      baseMessageRef: options?.editMessageRef,
-      optimistic: options?.optimisticEcho !== false,
+      message: isCompactCommand ? "" : message,
+      commandType,
+      attachments: isCompactCommand ? [] : uploadedFiles,
+      isEditResend: !isCompactCommand && Boolean(options?.editMessageRef),
+      baseMessageRef: isCompactCommand ? undefined : options?.editMessageRef,
+      optimistic: !isCompactCommand && options?.optimisticEcho !== false,
       submit: async () => {
         // Preserve the instant optimistic echo, then require the bounded
         // runtime wake-up before dispatch. The socket layer still understands
@@ -2520,6 +2529,7 @@ export default function GatewayApp() {
     if (outcome.kind === "accepted") {
       const acceptedConversationId = outcome.accepted.conversationId.trim();
       if (
+        !isCompactCommand &&
         startedAsDraftConversation &&
         acceptedConversationId &&
         acceptedConversationId !== activeConversationId &&
@@ -4904,24 +4914,53 @@ export default function GatewayApp() {
   const transcriptToolStatusIsCompaction = displayedTranscript.toolStatusIsCompaction;
   const composerIsSending = transcriptBusy;
   const transcriptError = displayedTranscriptRowCount === 0 ? null : chatError;
-  const composerCompactionBlocked = transcriptToolStatusIsCompaction;
   const chatProtocolIncompatible = isChatRuntimeProtocolIncompatible(status);
   const chatProtocolIncompatibleMessage = chatProtocolIncompatible
     ? translate("chat.runtime.protocolIncompatible", settings.locale)
     : null;
+  const composerCompactionBlocked =
+    transcriptToolStatusIsCompaction ||
+    transcriptBusy ||
+    historyDetailLoading ||
+    !api ||
+    status?.online !== true ||
+    chatProtocolIncompatible;
+  const composerRuntimeDisabled =
+    transcriptToolStatusIsCompaction ||
+    historyDetailLoading ||
+    !api ||
+    status?.online !== true ||
+    chatProtocolIncompatible;
+
+  async function handleManualCompact() {
+    const conversationId = getDisplayedConversationId().trim();
+    if (
+      !api ||
+      !conversationId ||
+      isLocalDraftConversationId(conversationId) ||
+      composerCompactionBlocked
+    ) {
+      return;
+    }
+    const outcome = await sendChat("", {
+      conversationId,
+      commandType: "chat.compact",
+      optimisticEcho: false,
+      runtimeControls: chatRuntimeControlsForCurrentProvider,
+    });
+    if (outcome?.kind === "failed") {
+      setChatError(outcome.message);
+    }
+  }
   const sidebarSectionsDisabled = shouldDisableGatewaySidebarSections({
     connectionLost: gatewayConnectionLost,
     agentStatusFresh: sidebarAgentStatusFresh,
     agentOnline: status?.online,
   });
-  const composerInputDisabled =
-    !status?.online ||
-    chatProtocolIncompatible ||
-    historyDetailLoading ||
-    composerCompactionBlocked;
+  const composerInputDisabled = composerRuntimeDisabled;
   const composerPlaceholder = chatProtocolIncompatible
     ? translate("chat.runtime.protocolIncompatiblePlaceholder", settings.locale)
-    : composerCompactionBlocked
+    : transcriptToolStatusIsCompaction
       ? translate("chat.compactingContextWait", settings.locale)
       : historyDetailLoading
         ? "正在加载会话历史，请稍候..."
@@ -5409,6 +5448,7 @@ export default function GatewayApp() {
                           thinkingAlwaysOn={chatRuntimeThinkingAlwaysOn}
                           contextUsageTokens={gatewayContextUsageTokens}
                           contextWindow={currentModelContextWindow}
+                          onManualCompactConfirm={handleManualCompact}
                           manualCompactBlocked={composerCompactionBlocked}
                           gitClient={gitClient}
                           gitWriteEnabled={settings.remote.enableWebGit}

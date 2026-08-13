@@ -11,6 +11,7 @@ export type ChatCommandRequest = {
   conversationId: string;
   clientRequestId: string;
   message: string;
+  commandType?: "chat.submit" | "chat.edit_resend" | "chat.compact";
   attachments?: Extract<
     Parameters<TranscriptStore["addOptimisticUserEntry"]>[0]["attachments"],
     unknown

@@ -35,6 +35,32 @@ func TestProbeRuntimeRejectsDesktopWithoutChatIngressV1(t *testing.T) {
 	}
 }
 
+func TestNormalizeRequestBodyForCommandCompactClearsUserPayload(t *testing.T) {
+	body := handler.ChatRequestBody{
+		ConversationID:  " conv-1 ",
+		ClientRequestID: " client-1 ",
+		Message:         "ignored",
+		UploadedFiles:   []handler.ChatUploadedFileBody{{FileName: "ignored.txt"}},
+		QueuePolicy:     "append",
+	}
+	if err := NormalizeRequestBodyForCommand(&body, "chat.compact"); err != nil {
+		t.Fatalf("NormalizeRequestBodyForCommand() error = %v", err)
+	}
+	if body.ConversationID != "conv-1" || body.ClientRequestID != "client-1" {
+		t.Fatalf("compact ids not normalized: %#v", body)
+	}
+	if body.Message != "" || len(body.UploadedFiles) != 0 || body.QueuePolicy != "auto" {
+		t.Fatalf("compact payload not cleared: %#v", body)
+	}
+}
+
+func TestBuildAcceptedCommandPayloadsForCommandCompactDoesNotSeedTranscript(t *testing.T) {
+	body := handler.ChatRequestBody{ConversationID: "conv-1", ClientRequestID: "client-1"}
+	if payloads := BuildAcceptedCommandPayloadsForCommand(body, nil, "chat.compact"); payloads != nil {
+		t.Fatalf("compact accepted payloads = %#v, want nil", payloads)
+	}
+}
+
 func TestChatTimeoutDefaultsAreShortAndDedicated(t *testing.T) {
 	t.Parallel()
 
@@ -66,7 +92,7 @@ func TestDispatchAcceptedCommandUsesDeliveryTimeout(t *testing.T) {
 
 	startedAt := time.Now()
 	DispatchAcceptedCommand(
-		context.Background(), cfg, sm, "desktop-agent", nil, start, body, nil, "trace-delivery-timeout",
+		context.Background(), cfg, sm, "desktop-agent", nil, start, body, nil, "chat.submit", "trace-delivery-timeout",
 	)
 	elapsed := time.Since(startedAt)
 	if elapsed < 20*time.Millisecond || elapsed > 500*time.Millisecond {
