@@ -20,6 +20,7 @@ import {
   updateMcp,
   updateSystem,
 } from "@liveagent/app/lib/settings/index";
+import { openUrl } from "@liveagent/app/shims/tauriOpener";
 import { ToolPolicyToggle } from "@liveagent/ui/components/hub/ToolPolicyToggle";
 import { Button } from "@liveagent/ui/components/ui/button";
 import { ConfirmDeletePopover } from "@liveagent/ui/components/ui/confirm-action-popover";
@@ -398,15 +399,15 @@ const McpServerCard = memo(function McpServerCard(props: {
             size="sm"
           />
           {docsLink ? (
-            <a
-              href={docsLink}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              type="button"
               title={serverConfig.docsUrl}
+              aria-label={t("mcpHub.storeOpenExternal")}
+              onClick={() => void openUrl(docsLink)}
               className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
             >
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
+              <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
           ) : null}
           <button
             type="button"
