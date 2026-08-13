@@ -1,4 +1,5 @@
 import type { Context, UserMessage } from "@earendil-works/pi-ai";
+import { canManualCompact, contextUsageRatio } from "@liveagent/ui/lib/chat/contextUsage";
 
 import type { StreamDebugLogger } from "../../debug/agentDebug";
 import type { ProviderId } from "../../settings";
@@ -25,6 +26,7 @@ import { type CompleteAssistantFn, createCompactionAbortError } from "./summariz
 import { TokenLedger } from "./tokenLedger";
 import type {
   CompactionDecision,
+  CompactionDecisionReason,
   CompactionIntent,
   CompactionStatus,
   CompactionTrigger,
@@ -88,6 +90,19 @@ export type CompactionTurnBinding = {
 export type CompactionDuringRunResult = {
   context: Context | null;
   shouldDisableProtection: boolean;
+  /** Explicit result for this invocation; never infer it from retained statusPhase. */
+  outcome: "compacted" | "skipped" | "failed";
+  reason?: CompactionDecisionReason;
+};
+
+export type ManualCompactionOutcome =
+  | { status: "compacted" | "busy" }
+  | { status: "failed"; aborted?: boolean }
+  | { status: "skipped"; reason: CompactionDecisionReason };
+
+export type ManualContextUsageSnapshot = {
+  totalTokens?: number;
+  fixedTokens?: number;
 };
 
 type RollbackSnapshot = {
@@ -287,10 +302,12 @@ export class CompactionController {
     tools?: Context["tools"];
     includeAbortedMessages?: boolean;
     includeUploadedFilesMetadata?: boolean;
+    /** Manual compaction may supply the already-observed ring value. */
+    manualContextUsage?: ManualContextUsageSnapshot;
   }): Promise<CompactionDuringRunResult> {
     const binding = this.binding;
     if (!binding) {
-      return { context: null, shouldDisableProtection: false };
+      return { context: null, shouldDisableProtection: false, outcome: "skipped" };
     }
     // 覆盖"mid-stream abort 后、summarizer 启动前"用户恰好点停止的间隙。
     if (binding.cancellation.userStop.signal.aborted) {
@@ -317,7 +334,10 @@ export class CompactionController {
 
     let workingState = params.state;
     let pruned: PruneConversationResult | null = null;
-    if (shouldPruneBeforeCompaction(this.pressure, now)) {
+    // Manual compaction is an idle operation. Do not apply an unpersisted prune
+    // fallback before or after it; the caller has no continuation turn to absorb
+    // that state safely.
+    if (params.trigger !== "manual" && shouldPruneBeforeCompaction(this.pressure, now)) {
       const attempt = pruneConversationState(workingState, resolvePruneOptions(this.pressure));
       if (attempt.applied) {
         pruned = attempt;
@@ -331,7 +351,17 @@ export class CompactionController {
         : binding.buildPreparedContext(workingState, params.tools, buildOptions);
     this.rebaseLedger(budgetContext);
     this.updateTurnMeta(workingState);
-    const decision = this.decide("protection", this.ledger.total(), now);
+    const manualTotalTokens =
+      typeof params.manualContextUsage?.totalTokens === "number" &&
+      Number.isFinite(params.manualContextUsage.totalTokens) &&
+      params.manualContextUsage.totalTokens > 0
+        ? Math.floor(params.manualContextUsage.totalTokens)
+        : this.ledger.total();
+    const intent: CompactionIntent = params.trigger === "manual" ? "optimization" : "protection";
+    const decision =
+      params.trigger === "manual"
+        ? this.decideManual(manualTotalTokens, now)
+        : this.decide(intent, this.ledger.total(), now);
     this.logDecision(decision);
 
     if (!decision.shouldCompact) {
@@ -340,14 +370,23 @@ export class CompactionController {
         return {
           context: buildFallbackContext(pruned.state),
           shouldDisableProtection: false,
+          outcome: "skipped",
+          reason: decision.reason,
         };
       }
       return params.trigger === "mid-stream"
         ? {
             context: buildFallbackContext(workingState),
             shouldDisableProtection: true,
+            outcome: "skipped",
+            reason: decision.reason,
           }
-        : { context: null, shouldDisableProtection: false };
+        : {
+            context: null,
+            shouldDisableProtection: false,
+            outcome: "skipped",
+            reason: decision.reason,
+          };
     }
 
     this.rollbackSnapshot = { state: params.state, persistOnRollback: true };
@@ -358,7 +397,7 @@ export class CompactionController {
     try {
       const outcome = await runCompaction({
         state: workingState,
-        intent: "protection",
+        intent,
         contextTokens: decision.totalTokens,
         threshold: decision.threshold,
         providerId: binding.providerId,
@@ -381,22 +420,33 @@ export class CompactionController {
       const resumeContext = binding.buildResumeContext(outcome.state, resumeMessage, params.tools, {
         includeUploadedFilesMetadata: params.includeUploadedFilesMetadata,
       });
-      this.notePostCompactionPressure(resumeContext, outcome.state, decision.threshold);
-      return { context: resumeContext, shouldDisableProtection: false };
+      const postCompactionContext =
+        params.trigger === "manual"
+          ? binding.buildPreparedContext(outcome.state, params.tools, buildOptions)
+          : resumeContext;
+      this.notePostCompactionPressure(postCompactionContext, outcome.state, decision.threshold);
+      return {
+        context: params.trigger === "manual" ? null : resumeContext,
+        shouldDisableProtection: false,
+        outcome: "compacted",
+      };
     } catch (error) {
       if (this.isAbortOutcome(scope.controller.signal, error)) {
         throw error;
       }
       this.rollbackSnapshot = null;
       const fallback =
-        pruned ?? pruneConversationState(workingState, resolvePruneOptions(this.pressure));
-      if (fallback.applied) {
+        params.trigger === "manual"
+          ? null
+          : pruned ?? pruneConversationState(workingState, resolvePruneOptions(this.pressure));
+      if (fallback?.applied) {
         binding.sinks.applyStateMidRun?.(fallback.state);
         this.settleFailed(params.trigger, PRUNE_FALLBACK_NOTICE);
         binding.sinks.setBridgeToolStatus?.(buildPruneFallbackStatus(fallback.prunedMessageCount));
         return {
           context: buildFallbackContext(fallback.state),
           shouldDisableProtection: false,
+          outcome: "failed",
         };
       }
       this.settleFailed(
@@ -407,13 +457,87 @@ export class CompactionController {
         ? {
             context: buildFallbackContext(workingState),
             shouldDisableProtection: true,
+            outcome: "failed",
           }
-        : { context: null, shouldDisableProtection: false };
+        : {
+            context: null,
+            shouldDisableProtection: false,
+            outcome: "failed",
+          };
     } finally {
       scope.release();
       this.inFlight = false;
       this.binding?.sinks.setBridgeToolStatus?.(null);
     }
+  }
+
+  /**
+   * Idle, user-requested compaction. The controller temporarily owns the same
+   * binding used by a normal turn, probes with a local ledger, then delegates
+   * execution to compactDuringRun so status, persistence, rollback, and the
+   * single-flight guard stay on one lifecycle.
+   */
+  async compactManually(
+    binding: Omit<CompactionTurnBinding, "presend">,
+    state: ConversationViewState,
+    contextUsage?: ManualContextUsageSnapshot,
+    options?: {
+      tools?: Context["tools"];
+      onProceed?: () => void;
+    },
+  ): Promise<ManualCompactionOutcome> {
+    if (this.binding || this.inFlight) return { status: "busy" };
+
+    this.bindTurn(binding);
+    try {
+      const probeLedger = new TokenLedger();
+      probeLedger.rebase(binding.buildPreparedContext(state, options?.tools));
+      this.updateTurnMeta(state);
+      const suppliedTotal = contextUsage?.totalTokens;
+      const totalTokens =
+        typeof suppliedTotal === "number" && Number.isFinite(suppliedTotal) && suppliedTotal > 0
+          ? Math.floor(suppliedTotal)
+          : probeLedger.total();
+      const decision = this.decideManual(totalTokens);
+      this.logDecision(decision);
+      if (!decision.shouldCompact) {
+        return { status: "skipped", reason: decision.reason };
+      }
+
+      options?.onProceed?.();
+      const result = await this.compactDuringRun({
+        trigger: "manual",
+        state,
+        tools: options?.tools,
+        manualContextUsage: contextUsage,
+      });
+      if (result.outcome === "compacted") return { status: "compacted" };
+      if (result.outcome === "skipped") {
+        return { status: "skipped", reason: result.reason ?? "disabled" };
+      }
+      return { status: "failed" };
+    } catch (error) {
+      const aborted =
+        binding.cancellation.userStop.signal.aborted || isAbortLikeError(error);
+      if (aborted) {
+        await this.handleTurnAbort();
+        return { status: "failed", aborted: true };
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      this.settleFailed("manual", message || "压缩失败");
+      return { status: "failed" };
+    } finally {
+      this.unbindTurn();
+    }
+  }
+
+  private decideManual(totalTokens: number, now = Date.now()) {
+    const decision = this.decide("optimization", totalTokens, now, true);
+    if (!decision.shouldCompact) return decision;
+    if (canManualCompact(contextUsageRatio(decision.totalTokens, decision.contextWindow))) {
+      return decision;
+    }
+    return { ...decision, shouldCompact: false, reason: "below-manual-threshold" as const };
   }
 
   // 用户中止后的统一善后：有快照则回滚（恢复状态/输入框/可选持久化）并返回 true。
@@ -455,7 +579,12 @@ export class CompactionController {
     };
   }
 
-  private decide(intent: CompactionIntent, totalTokens: number, now = Date.now()) {
+  private decide(
+    intent: CompactionIntent,
+    totalTokens: number,
+    now = Date.now(),
+    bypassThresholdAndCooldown = false,
+  ) {
     const binding = this.binding;
     if (!binding) {
       throw new Error("compaction decision requested without an active turn binding");
@@ -472,6 +601,7 @@ export class CompactionController {
       pressure: this.pressure,
       inFlight: this.inFlight,
       now,
+      bypassThresholdAndCooldown,
     });
   }
 

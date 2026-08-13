@@ -113,10 +113,10 @@ function createSinksRecorder() {
   };
 }
 
-function bindController(controller, overrides = {}) {
+function createBinding(overrides = {}) {
   const cancellation = cancellationModule.createTurnCancellation();
   const recorder = createSinksRecorder();
-  controller.bindTurn({
+  const binding = {
     providerId: "anthropic",
     model: "claude-x",
     runtime: {
@@ -135,8 +135,14 @@ function bindController(controller, overrides = {}) {
         : context;
     },
     ...overrides,
-  });
-  return { cancellation, recorder };
+  };
+  return { binding, cancellation, recorder };
+}
+
+function bindController(controller, overrides = {}) {
+  const result = createBinding(overrides);
+  controller.bindTurn(result.binding);
+  return result;
 }
 
 test("pre-send compaction: checkpoint, persist, re-appended user message, paired status", async () => {
@@ -518,6 +524,100 @@ test("a rejected checkpoint persist never switches runtime state to the unpersis
     recorder
       .byKind("applyStateMidRun")
       .every(([, state]) => state.meta.activeSegmentIndex === 0),
+  );
+});
+
+test("manual compaction is gated at 50% and does not publish side effects when skipped", async () => {
+  const controller = new CompactionController();
+  const state = conversationState.createConversationStateFromContext({
+    systemPrompt: "sys",
+    messages: [user("hi"), assistantWithUsage("hello", 90_000)],
+  });
+  const { binding, recorder } = createBinding({
+    complete: async () => summaryResponse(),
+  });
+
+  const result = await controller.compactManually(binding, state, { totalTokens: 99_000 });
+
+  assert.deepEqual(result, { status: "skipped", reason: "below-manual-threshold" });
+  assert.equal(recorder.events.length, 0);
+});
+
+test("manual compaction uses the shared checkpoint lifecycle and applies the persisted state", async () => {
+  const controller = new CompactionController();
+  const state = bigState();
+  const { binding, recorder } = createBinding({
+    complete: async () => summaryResponse(),
+  });
+
+  const result = await controller.compactManually(binding, state, { totalTokens: 150_000 });
+
+  assert.deepEqual(result, { status: "compacted" });
+  assert.deepEqual(
+    recorder.byKind("publishStatus").map(([, status]) => status.phase),
+    ["running", "completed"],
+  );
+  assert.equal(recorder.byKind("applyStateMidRun").length, 1);
+  assert.equal(recorder.byKind("persist").length, 1);
+  assert.equal(recorder.byKind("queueCheckpoint").length, 1);
+  assert.equal(recorder.byKind("bridge").at(-1)[1], null);
+  assert.ok((controller.contextUsageTokens ?? 0) > 0);
+});
+
+test("manual compaction rejects a duplicate request while the first request is in flight", async () => {
+  const controller = new CompactionController();
+  const state = bigState();
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let completeCalls = 0;
+  const firstBinding = createBinding({
+    complete: async () => {
+      completeCalls += 1;
+      await gate;
+      return summaryResponse();
+    },
+  });
+  const first = controller.compactManually(firstBinding.binding, state, { totalTokens: 150_000 });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const secondBinding = createBinding({ complete: async () => summaryResponse() });
+  const second = await controller.compactManually(
+    secondBinding.binding,
+    state,
+    { totalTokens: 150_000 },
+  );
+  assert.deepEqual(second, { status: "busy" });
+
+  release();
+  assert.deepEqual(await first, { status: "compacted" });
+  assert.equal(completeCalls, 1);
+});
+
+test("manual compaction abort rolls back without applying a checkpoint", async () => {
+  const controller = new CompactionController();
+  const state = bigState();
+  const { binding, cancellation, recorder } = createBinding({
+    complete: (params) =>
+      new Promise((_, reject) => {
+        params.signal?.addEventListener("abort", () => {
+          const error = new Error("manual aborted");
+          error.name = "AbortError";
+          reject(error);
+        });
+      }),
+  });
+  const pending = controller.compactManually(binding, state, { totalTokens: 150_000 });
+  await new Promise((resolve) => setImmediate(resolve));
+  cancellation.userStop.abort();
+
+  assert.deepEqual(await pending, { status: "failed", aborted: true });
+  assert.equal(recorder.byKind("applyStateMidRun").length, 1);
+  assert.equal(recorder.byKind("persist").length, 0);
+  assert.deepEqual(
+    recorder.byKind("publishStatus").map(([, status]) => status.phase),
+    ["running", "idle"],
   );
 });
 

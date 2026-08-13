@@ -36,6 +36,7 @@ import {
   type MentionComposerSkill,
 } from "@liveagent/ui/components/chat/MentionComposer";
 import { GitBranchSelector } from "@liveagent/ui/components/git/GitBranchSelector";
+import { ConfirmActionPopover } from "@liveagent/ui/components/ui/confirm-action-popover";
 import { Button } from "@liveagent/ui/components/ui/button";
 import {
   Select,
@@ -282,6 +283,10 @@ export type ChatComposerBarProps = {
   contextUsageTokens?: number;
   contextUsageTokensSource?: ContextUsageTokensSource;
   contextWindow?: number;
+  /** Optional confirmation callback; omitted keeps the ring display-only. */
+  onManualCompactConfirm?: () => void | Promise<unknown>;
+  /** Disable the manual action while the conversation is busy or compacting. */
+  manualCompactBlocked?: boolean;
   workspaceActivityClient?: WorkspaceActivityClient | null;
   onSend: () => void;
   onStop: () => void;
@@ -336,6 +341,8 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
     contextUsageTokens,
     contextUsageTokensSource,
     contextWindow,
+    onManualCompactConfirm,
+    manualCompactBlocked = false,
     workspaceActivityClient,
     onSend,
     onStop,
@@ -968,6 +975,30 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
               contextWindow={contextWindow}
             />
           </div>
+
+          {onManualCompactConfirm ? (
+            <ConfirmActionPopover
+              title={t("chat.manualCompactTitle")}
+              description={t("chat.manualCompactDescription")}
+              confirmLabel={t("chat.manualCompactConfirm")}
+              tone="default"
+              side="top"
+              onConfirm={() => void onManualCompactConfirm()}
+            >
+              {(open) => (
+                <button
+                  type="button"
+                  disabled={controlsDisabled || isSending || manualCompactBlocked}
+                  title={t("chat.manualCompactTitle")}
+                  aria-label={t("chat.manualCompactTitle")}
+                  onClick={open}
+                  className="absolute right-12 top-1/2 z-20 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground/70 outline-hidden transition-[background-color,color,scale] hover:bg-muted/60 hover:text-foreground active:scale-90 disabled:pointer-events-none disabled:opacity-40 focus-visible:bg-muted/60"
+                >
+                  <Sparkle className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </ConfirmActionPopover>
+          ) : null}
 
           {/* 常驻 flex-1：动画把卡片钳在中间高度时由本区吸收伸缩，工具栏才能
               全程贴住卡片底边。min-h-0 只在展开态加——折叠态靠自动最小高度

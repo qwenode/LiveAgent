@@ -26,6 +26,8 @@ import { Button } from "@liveagent/ui/components/ui/button";
 import { useConfirmDialog } from "@liveagent/ui/components/ui/confirm-dialog";
 import { useLocale } from "@liveagent/ui/i18n/index";
 import { getAutomationState, useAutomation } from "@liveagent/ui/lib/automation/index";
+import { buildSkillsSystemPrompt, type SkillSummary } from "@liveagent/ui/lib/skills/index";
+import { buildMemoryOverviewSection } from "../lib/memory/prompts/injection";
 import { normalizeLogicalLineEndings } from "@liveagent/ui/lib/chat/composerText";
 import { openChatFileLink } from "@liveagent/ui/lib/chat/openChatFileLink";
 import { selectLatestTaskProgress } from "@liveagent/ui/lib/chat/taskProgress";
@@ -169,6 +171,7 @@ import {
 import { useChatTurnQueue } from "./chat/queue/useChatTurnQueue";
 import { syncMovedConversationRuntimeWorkdir } from "./chat/runtime/chatPageRuntime";
 import { useChatModelSelection } from "./chat/runtime/useChatModelSelection";
+import { useManualCompaction } from "./chat/runtime/useManualCompaction";
 import { useSendChatTurn } from "./chat/runtime/useSendChatTurn";
 import { ChatSidebarContainer } from "./chat/sidebar/ChatSidebarContainer";
 import { useProjectTerminals } from "./chat/workspace/useProjectTerminals";
@@ -528,10 +531,10 @@ export function ChatPage(props: ChatPageProps) {
     getConversationAbortController,
     requestConversationStop,
     getConversationStopRequestVersion,
-    isConversationStopRequested,
-    consumeConversationStop,
     setConversationStopHandler,
     clearConversationStopHandler,
+    isConversationStopRequested,
+    consumeConversationStop,
     requestActiveConversationStop,
     setConversationAgentSteerHandler,
     getConversationAgentSteerHandler,
@@ -695,6 +698,50 @@ export function ChatPage(props: ChatPageProps) {
       .map((name) => byName.get(name))
       .filter((skill): skill is (typeof availableSkills)[number] => Boolean(skill));
   }, [availableSkills, selectedSkillNames, skillsEnabled]);
+  const resolvePromptInputs = useCallback(
+    async (promptWorkdir: string) => {
+      let skillsPrompt = "";
+      if (skillsEnabled && selectedSkillNames.length > 0) {
+        let skillsList = availableSkills;
+        let rootDir = skillsRootDir;
+        let byName = new Map(skillsList.map((skill) => [skill.name, skill]));
+        const missing = selectedSkillNames.filter((name) => !byName.has(name));
+        if (missing.length > 0) {
+          const fresh = await refreshSkills();
+          if (fresh) {
+            skillsList = fresh.skills;
+            rootDir = fresh.rootDir;
+            byName = new Map(skillsList.map((skill) => [skill.name, skill]));
+          }
+        }
+        const selectedSkills = selectedSkillNames
+          .map((name) => byName.get(name))
+          .filter((skill): skill is SkillSummary => Boolean(skill));
+        if (selectedSkills.length > 0) {
+          skillsPrompt = buildSkillsSystemPrompt({
+            rootDir,
+            selected: selectedSkills,
+            explicit: [],
+          });
+        }
+      }
+
+      let memoryPrompt = "";
+      try {
+        memoryPrompt = await buildMemoryOverviewSection(promptWorkdir);
+      } catch (error) {
+        console.warn("Failed to build memory overview prompt for manual compaction", error);
+      }
+      return { skillsPrompt, memoryPrompt };
+    },
+    [
+      availableSkills,
+      refreshSkills,
+      selectedSkillNames,
+      skillsEnabled,
+      skillsRootDir,
+    ],
+  );
   const terminalProjectPath = isAgentMode ? activeWorkspaceProjectPath.trim() : "";
   const terminalProjectPathKey = terminalProjectPath
     ? workspaceProjectPathKey(terminalProjectPath)
@@ -1234,6 +1281,37 @@ export function ChatPage(props: ChatPageProps) {
   openInitialActionRef.current = openConversationInitial;
   loadEarlierHistoryActionRef.current = loadEarlierConversationHistory;
   cleanupDeletedConversationActionRef.current = cleanupDeletedConversation;
+
+  const runManualCompaction = useManualCompaction({
+    settings,
+    t,
+    currentConversationIdRef,
+    isConversationRunning,
+    setConversationSendingState,
+    setConversationAbortController,
+    setConversationStopHandler,
+    clearConversationStopHandler,
+    consumeConversationStop,
+    buildRuntimeEntryFromVisibleState,
+    getCompactionController,
+    getConversationLiveTranscriptStore,
+    updateConversationRuntimeEntry,
+    resetLiveTranscript,
+    updateToolStatus,
+    persistConversation,
+    activeAgentPrompt,
+    resolvePromptInputs,
+  });
+  const handleManualCompact = useCallback(async () => {
+    const result = await runManualCompaction();
+    if (result.status === "compacted") {
+      addNotify("success", t("chat.manualCompactCompleted"));
+      return;
+    }
+    if (result.message) {
+      addNotify(result.status === "failed" ? "error" : "warning", result.message);
+    }
+  }, [addNotify, runManualCompaction, t]);
 
   const {
     handleRemoveWorkspaceProject,
@@ -2460,6 +2538,16 @@ export function ChatPage(props: ChatPageProps) {
                   thinkingAlwaysOn={chatRuntimeThinkingAlwaysOn}
                   contextUsageTokensSource={contextUsageTokensSource}
                   contextWindow={currentModelContextWindow}
+                  onManualCompactConfirm={
+                    isAgentDevExecutionMode ? handleManualCompact : undefined
+                  }
+                  manualCompactBlocked={
+                    isSending ||
+                    isConversationRunning(currentConversationId) ||
+                    isCompactionRunning ||
+                    isConversationHydrating ||
+                    isConversationHydrationFailed
+                  }
                   gitClient={tauriGitClient}
                   workspaceActivityClient={tauriWorkspaceActivityClient}
                   onSend={handleSend}

@@ -128,6 +128,9 @@ export function decideCompaction(params: {
   pressure: CompactionPressure;
   inFlight: boolean;
   now: number;
+  // A user-requested compaction bypasses only the automatic threshold/cooldown;
+  // disabled, empty-context, and in-flight guards remain authoritative.
+  bypassThresholdAndCooldown?: boolean;
 }): CompactionDecision {
   const contextWindow = Math.max(0, Math.floor(params.modelConfig?.contextWindow ?? 0));
   const maxOutputToken = Math.max(0, Math.floor(params.modelConfig?.maxOutputToken ?? 0));
@@ -171,12 +174,13 @@ export function decideCompaction(params: {
     return { ...base, shouldCompact: false, reason: "in-flight", threshold, thresholdMode };
   }
 
-  if (base.totalTokens < threshold) {
+  if (!params.bypassThresholdAndCooldown && base.totalTokens < threshold) {
     return { ...base, shouldCompact: false, reason: "below-threshold", threshold, thresholdMode };
   }
 
   // 冷却窗只拦"刚压缩完又立即越阈值"的超大单轮；正常自触发已被账本重置阻断。
   if (
+    !params.bypassThresholdAndCooldown &&
     params.lastCompactionAt > 0 &&
     params.now - params.lastCompactionAt < MIN_COMPACTION_INTERVAL_MS &&
     params.userMessageCount < MIN_COMPACTION_USER_MESSAGES

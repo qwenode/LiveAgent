@@ -52,3 +52,11 @@ The upstream context-usage feature is a multi-commit runtime/UI migration. The l
 4. Add GUI composer props and ChatPage wiring without replacing the local control-rail/send layout.
 5. Specify Gateway WebUI behavior explicitly (read-only ring versus manual action) and extend the existing transcript event/status contracts only where required.
 6. Add pure utility, controller, GUI wiring, and Gateway transcript regression tests before enabling the ring or manual action by default.
+
+## Task 5 manual compaction adaptation (2026-08-13)
+
+- **Upstream scope:** remainder of the reliable context-usage/manual-compaction chain (18dabdac / 2743f3d0 reliability path).
+- **Adapted files:** `crates/agent-gui/src/lib/chat/compaction/controller.ts`, `policy.ts`, `types.ts`, `pages/chat/runtime/useManualCompaction.ts`, `pages/ChatPage.tsx`, `agent-ui/src/pages/chat/ChatComposerBar.tsx`, desktop/Gateway i18n catalogs, and controller regression tests.
+- **Local architecture:** manual compaction is controller-backed and reuses the existing `TokenLedger`, binding, status sinks, persistence checkpoint, single-flight guard, abort rollback, and composer stop handler. The context ring remains read-only; the adjacent sparkle action is opt-in and confirmation-gated.
+- **Safety policy:** the action is exposed only in desktop Agent Dev mode and is blocked while the conversation is running, hydrating, or already compacting. Manual requests bypass only automatic threshold/cooldown checks; empty/disabled/in-flight guards remain authoritative.
+- **Deferred follow-up:** upstream metadata/event propagation and broad shared transcript/status extraction remain deferred because local GUI/Gateway transcript architectures are already divergent; mobile tooltip/animation polish remains a separate follow-up.
