@@ -105,6 +105,7 @@ type RollbackSnapshot = {
 export class CompactionController {
   private pressure = createCompactionPressure();
   private readonly ledger = new TokenLedger();
+  private readonly contextUsageListeners = new Set<() => void>();
   private binding: CompactionTurnBinding | null = null;
   private rollbackSnapshot: RollbackSnapshot | null = null;
   private inFlight = false;
@@ -127,6 +128,37 @@ export class CompactionController {
     return { compactionsApplied: this.pressure.compactionsApplied };
   }
 
+  /** Read-only usage snapshot for host UI; compaction remains controller-owned. */
+  get contextUsageTokens(): number | undefined {
+    const total = this.ledger.total();
+    return total > 0 ? total : undefined;
+  }
+
+  get contextUsageSnapshot() {
+    const snapshot = this.ledger.snapshot();
+    return snapshot.totalTokens > 0
+      ? { totalTokens: snapshot.totalTokens, fixedTokens: snapshot.fixedTokens }
+      : undefined;
+  }
+
+  subscribeContextUsage(listener: () => void) {
+    this.contextUsageListeners.add(listener);
+    return () => {
+      this.contextUsageListeners.delete(listener);
+    };
+  }
+
+  private notifyContextUsage() {
+    for (const listener of this.contextUsageListeners) {
+      listener();
+    }
+  }
+
+  private rebaseLedger(context: Context) {
+    this.ledger.rebase(context);
+    this.notifyContextUsage();
+  }
+
   private async persistCheckpoint(binding: CompactionTurnBinding, state: ConversationViewState) {
     const persisted = await binding.sinks.persist?.(state);
     if (persisted === false) {
@@ -135,7 +167,7 @@ export class CompactionController {
   }
 
   beginRequest(context: Context, state: ConversationViewState) {
-    this.ledger.rebase(context);
+    this.rebaseLedger(context);
     this.updateTurnMeta(state);
   }
 
@@ -176,7 +208,7 @@ export class CompactionController {
     const budgetContext = pruned
       ? binding.buildPreparedContext(workingState, params.tools, buildOptions)
       : params.budgetContext;
-    this.ledger.rebase(budgetContext);
+    this.rebaseLedger(budgetContext);
     this.updateTurnMeta(workingState);
     const decision = this.decide("optimization", this.ledger.total(), now);
     this.logDecision(decision);
@@ -297,7 +329,7 @@ export class CompactionController {
       !pruned && params.budgetContext
         ? params.budgetContext
         : binding.buildPreparedContext(workingState, params.tools, buildOptions);
-    this.ledger.rebase(budgetContext);
+    this.rebaseLedger(budgetContext);
     this.updateTurnMeta(workingState);
     const decision = this.decide("protection", this.ledger.total(), now);
     this.logDecision(decision);
@@ -448,7 +480,7 @@ export class CompactionController {
     stateAfter: ConversationViewState,
     threshold: number,
   ) {
-    this.ledger.rebase(contextAfter);
+    this.rebaseLedger(contextAfter);
     this.updateTurnMeta(stateAfter);
     this.pressure = notePressureAfterCompaction(this.pressure, {
       totalTokensAfter: this.ledger.total(),

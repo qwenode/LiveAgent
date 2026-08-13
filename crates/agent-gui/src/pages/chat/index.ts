@@ -1,6 +1,7 @@
 export {
   ChatComposerBar,
   type ChatQueueTurnPreview,
+  type ContextUsageTokensSource,
 } from "@liveagent/ui/pages/chat/ChatComposerBar";
 export type {
   ActiveGatewayBridgeRequest,

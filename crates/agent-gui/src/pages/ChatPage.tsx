@@ -133,6 +133,7 @@ import { tauriWorkspaceActivityClient } from "../lib/workspace-activity/tauriWor
 import {
   ChatComposerBar,
   ChatTranscript,
+  type ContextUsageTokensSource,
   createChatRuntimeHost,
   type EnsureGatewayBridgeConversationReadyOptions,
   MAX_UPLOAD_FILES,
@@ -504,6 +505,17 @@ export function ChatPage(props: ChatPageProps) {
     registerGatewayRunMirror,
     finishGatewayRunMirror,
   } = useGatewayRunMirrorCoordinator();
+  const contextUsageController = useMemo(
+    () => getCompactionController(currentConversationId),
+    [currentConversationId, getCompactionController],
+  );
+  const contextUsageTokensSource = useMemo<ContextUsageTokensSource>(
+    () => ({
+      subscribe: (listener) => contextUsageController.subscribeContextUsage(listener),
+      getContextUsageTokens: () => contextUsageController.contextUsageTokens,
+    }),
+    [contextUsageController],
+  );
   const {
     currentConversationIdRef,
     conversationRuntimeCacheRef,
@@ -2446,6 +2458,8 @@ export function ChatPage(props: ChatPageProps) {
                   chatRuntimeControls={chatRuntimeControlsForCurrentProvider}
                   reasoningOptions={chatRuntimeReasoningOptions}
                   thinkingAlwaysOn={chatRuntimeThinkingAlwaysOn}
+                  contextUsageTokensSource={contextUsageTokensSource}
+                  contextWindow={currentModelContextWindow}
                   gitClient={tauriGitClient}
                   workspaceActivityClient={tauriWorkspaceActivityClient}
                   onSend={handleSend}

@@ -28,6 +28,7 @@ import {
 } from "@liveagent/app/lib/settings";
 import { ChatModelSelector } from "@liveagent/ui/components/chat/ChatModelSelector";
 import { ComposerAttachmentCard } from "@liveagent/ui/components/chat/ComposerAttachmentCard";
+import { ContextUsageRing } from "@liveagent/ui/components/chat/ContextUsageRing";
 import { getUploadedFileTypeIcon } from "@liveagent/ui/components/chat/fileTypeIcons";
 import {
   MentionComposer,
@@ -57,6 +58,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import {
   getUploadedImagePreviewCacheKey,
@@ -207,6 +209,33 @@ type QueueScrollbarState = {
   thumbTop: number;
 };
 
+export type ContextUsageTokensSource = {
+  subscribe: (listener: () => void) => () => void;
+  getContextUsageTokens: () => number | undefined;
+};
+
+const noopSubscribe = () => () => {};
+
+function ComposerContextUsageRing(props: {
+  source?: ContextUsageTokensSource;
+  totalTokens?: number;
+  contextWindow?: number;
+}) {
+  const { source, totalTokens, contextWindow } = props;
+  const staticSnapshot = useCallback(() => totalTokens, [totalTokens]);
+  const liveTokens = useSyncExternalStore(
+    source?.subscribe ?? noopSubscribe,
+    source?.getContextUsageTokens ?? staticSnapshot,
+    source?.getContextUsageTokens ?? staticSnapshot,
+  );
+  return (
+    <ContextUsageRing
+      totalTokens={source ? liveTokens : totalTokens}
+      contextWindow={contextWindow}
+    />
+  );
+}
+
 const QUEUE_SCROLLBAR_MIN_THUMB_HEIGHT = 24;
 const DEFAULT_QUEUE_SCROLLBAR_STATE: QueueScrollbarState = {
   visible: false,
@@ -249,6 +278,10 @@ export type ChatComposerBarProps = {
   gitClient?: GitClient | null;
   gitWriteEnabled?: boolean;
   gitDisabledMessage?: string;
+  /** Optional read-only context usage ring data supplied by a host runtime. */
+  contextUsageTokens?: number;
+  contextUsageTokensSource?: ContextUsageTokensSource;
+  contextWindow?: number;
   workspaceActivityClient?: WorkspaceActivityClient | null;
   onSend: () => void;
   onStop: () => void;
@@ -300,6 +333,9 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
     gitClient,
     gitWriteEnabled = true,
     gitDisabledMessage,
+    contextUsageTokens,
+    contextUsageTokensSource,
+    contextWindow,
     workspaceActivityClient,
     onSend,
     onStop,
@@ -924,6 +960,14 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: ChatComposer
               <Maximize2 className="h-4 w-4" />
             )}
           </button>
+
+          <div className="absolute right-3 top-1/2 z-20 -translate-y-1/2">
+            <ComposerContextUsageRing
+              source={contextUsageTokensSource}
+              totalTokens={contextUsageTokens}
+              contextWindow={contextWindow}
+            />
+          </div>
 
           {/* 常驻 flex-1：动画把卡片钳在中间高度时由本区吸收伸缩，工具栏才能
               全程贴住卡片底边。min-h-0 只在展开态加——折叠态靠自动最小高度

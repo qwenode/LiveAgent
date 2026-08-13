@@ -21,6 +21,7 @@ The upstream context-usage feature is a multi-commit runtime/UI migration. The l
 - **Upstream files:** 52 files across `agent-ui`, GUI, Gateway WebUI, transcript stores, runtime snapshots, queue handling, assistant/status rendering, and tests.
 - **Local reason for deferral:** this is a high-conflict architecture migration, not a portable component change. Missing local contracts include shared `contextUsage.ts`, `ContextUsageRing`, `useManualCompaction`, `contextUsageMetadata`, transient activity/state synchronization, shared checkpoint/retry/status components, and the upstream Gateway transcript/runtime event shapes. Local equivalents are split across `CompactionController`, `TokenLedger`, `liveTranscriptStore`, `useChatPageRuntimeStore`, `gatewayBridgeEvents`, and the existing `UsagePanel`.
 - **Follow-up:** compare the final upstream event/state contracts against the local controller and bridge; port pure usage math first, then add a read-only ring, and only afterward add a controller-backed manual action with single-flight and rollback tests.
+- **P0 adaptation landed:** the local branch keeps the existing `TokenLedger`/`CompactionController` as the sole source of truth and adds only a controller subscription, shared ratio/level helpers, focused tests, and a layout-preserving desktop read-only ring. Upstream transcript metadata fields are intentionally not retained until their local event and persistence propagation is complete.
 
 ### `2743f3d0` — shared context-usage reliability/refactor batch
 
