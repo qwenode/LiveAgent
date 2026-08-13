@@ -47,6 +47,7 @@ export type StoredSummaryMessage = {
       sourceMessageCount: number;
       estimatedInputTokens?: number;
       outputTokens?: number;
+      contextTokensAfter?: number;
       summarizer?: {
         inputTokens?: number;
         outputTokens?: number;
@@ -661,6 +662,11 @@ function buildTimelineItemsForSlice(
       coveredMessageCount: slice.summary.summaryMeta.coveredMessageCount,
       coversThroughMessageId: slice.summary.summaryMeta.coversThroughMessageId,
       generatedBy: slice.summary.summaryMeta.generatedBy,
+      ...(typeof slice.summary.summaryMeta.stats?.contextTokensAfter === "number" &&
+      Number.isFinite(slice.summary.summaryMeta.stats.contextTokensAfter) &&
+      slice.summary.summaryMeta.stats.contextTokensAfter > 0
+        ? { contextUsageTokens: Math.floor(slice.summary.summaryMeta.stats.contextTokensAfter) }
+        : {}),
       timestamp: slice.summary.timestamp,
       collapsed: true,
     });

@@ -91,6 +91,7 @@ export type TranscriptRow =
         model: string;
         promptVersion?: string;
       };
+      contextUsageTokens?: number;
       timestamp?: number;
     }
   | { key: string; origin: TranscriptRowOrigin; kind: "error"; text: string };

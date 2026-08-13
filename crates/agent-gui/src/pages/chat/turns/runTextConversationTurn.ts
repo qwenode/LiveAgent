@@ -156,6 +156,7 @@ export async function runTextConversationTurn(params: RunTextConversationTurnPar
   let failoverStatusVisible = false;
 
   function commitAssistantRoundMeta(assistant: AssistantMessage, round: number) {
+    const contextUsageTokens = compaction.observeContextMessages([assistant]);
     gatewayBridgeEvents.queueToken("", {
       round,
       provider: assistant.provider,
@@ -163,6 +164,7 @@ export async function runTextConversationTurn(params: RunTextConversationTurnPar
       api: assistant.api,
       stopReason: assistant.stopReason,
       usage: assistant.usage,
+      ...(contextUsageTokens ? { contextUsageTokens } : {}),
     });
     batchLiveRoundsUpdate(
       (prev) =>
@@ -175,6 +177,7 @@ export async function runTextConversationTurn(params: RunTextConversationTurnPar
             stopReason: String(assistant.stopReason ?? ""),
             usage: assistant.usage,
             usageTotalTokens: assistant.usage?.totalTokens,
+            ...(contextUsageTokens ? { contextUsageTokens } : {}),
           },
         })),
       transcriptStore,

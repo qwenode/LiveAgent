@@ -11,6 +11,7 @@ import {
   type SubagentCardDetails,
 } from "@liveagent/ui/lib/subagents/protocol";
 import { assistantMessageToText } from "../../providers/llm";
+import { readMessageContextUsage } from "../compaction/contextUsageMetadata";
 import {
   isProviderNativeWebFetchToolName,
   isProviderNativeWebSearchToolName,
@@ -72,6 +73,8 @@ export type UiRound = {
     stopReason?: string;
     usage?: Usage;
     usageTotalTokens?: number;
+    contextUsageTokens?: number;
+    contextRelevant?: boolean;
   };
 };
 
@@ -1231,6 +1234,7 @@ export function buildUiMessages(messages: Message[], indexOffset = 0): UiMessage
       if (messages[i].role === "assistant") {
         roundNum += 1;
         const assistant = messages[i] as AssistantMessage;
+        const contextUsage = readMessageContextUsage(assistant);
         lastAssistantTimestamp = assistant.timestamp ?? lastAssistantTimestamp;
 
         const toolResults: ToolResultMessage[] = [];
@@ -1262,6 +1266,7 @@ export function buildUiMessages(messages: Message[], indexOffset = 0): UiMessage
             stopReason: String(assistant.stopReason ?? ""),
             usage: assistant.usage as Usage | undefined,
             usageTotalTokens: assistant.usage?.totalTokens,
+            contextUsageTokens: contextUsage?.totalTokens,
           },
         });
       } else {

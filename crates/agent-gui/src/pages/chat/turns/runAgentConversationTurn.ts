@@ -699,7 +699,15 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     });
   }
 
-  function commitAssistantRoundMeta(assistant: AssistantMessage, round: number) {
+  function commitAssistantRoundMeta(
+    assistant: AssistantMessage,
+    round: number,
+    options?: { contextRelevant?: boolean },
+  ) {
+    const contextRelevant = options?.contextRelevant !== false;
+    const contextUsageTokens = contextRelevant
+      ? compaction.observeContextMessages([assistant])
+      : undefined;
     gatewayBridgeEvents.queueToken("", {
       round,
       provider: assistant.provider,
@@ -707,6 +715,8 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
       api: assistant.api,
       stopReason: assistant.stopReason,
       usage: assistant.usage,
+      ...(contextUsageTokens ? { contextUsageTokens } : {}),
+      ...(contextRelevant ? {} : { contextRelevant: false }),
     });
     batchLiveRoundsUpdate(
       (prev) =>
@@ -719,6 +729,8 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
             stopReason: String(assistant.stopReason ?? ""),
             usage: assistant.usage,
             usageTotalTokens: assistant.usage?.totalTokens,
+            ...(contextUsageTokens ? { contextUsageTokens } : {}),
+            ...(contextRelevant ? {} : { contextRelevant: false }),
           },
         })),
       transcriptStore,

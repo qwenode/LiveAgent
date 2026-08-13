@@ -18,8 +18,19 @@ export function deriveGatewayContextUsageTokens(
     }
     for (let roundIndex = row.rounds.length - 1; roundIndex >= 0; roundIndex -= 1) {
       const meta = row.rounds[roundIndex]?.meta as
-        | { usageTotalTokens?: unknown; usage?: { totalTokens?: unknown } }
+        | {
+            contextUsageTokens?: unknown;
+            contextRelevant?: unknown;
+            usageTotalTokens?: unknown;
+            usage?: { totalTokens?: unknown };
+          }
         | undefined;
+      if (meta?.contextRelevant === false) continue;
+      const contextUsageTokens =
+        typeof meta?.contextUsageTokens === "number" ? meta.contextUsageTokens : undefined;
+      if (contextUsageTokens !== undefined && Number.isFinite(contextUsageTokens)) {
+        return Math.max(0, Math.floor(contextUsageTokens));
+      }
       const usageTotalTokens =
         typeof meta?.usageTotalTokens === "number"
           ? meta.usageTotalTokens

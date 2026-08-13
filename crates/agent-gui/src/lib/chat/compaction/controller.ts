@@ -1,4 +1,4 @@
-import type { Context, UserMessage } from "@earendil-works/pi-ai";
+import type { Context, Message, UserMessage } from "@earendil-works/pi-ai";
 import { canManualCompact, contextUsageRatio } from "@liveagent/ui/lib/chat/contextUsage";
 
 import type { StreamDebugLogger } from "../../debug/agentDebug";
@@ -23,7 +23,8 @@ import {
   PRUNE_FALLBACK_NOTICE,
 } from "./statusText";
 import { type CompleteAssistantFn, createCompactionAbortError } from "./summarizer";
-import { TokenLedger } from "./tokenLedger";
+import { getUsageTotalTokens, TokenLedger } from "./tokenLedger";
+import { writeAssistantContextUsage } from "./contextUsageMetadata";
 import type {
   CompactionDecision,
   CompactionDecisionReason,
@@ -46,7 +47,7 @@ export type CompactionSinks = {
   applyStateMidRun?: (state: ConversationViewState) => void;
   publishStatus?: (status: CompactionStatus) => void;
   setBridgeToolStatus?: (status: string | null, isCompaction?: boolean) => void;
-  queueCheckpoint?: (state: ConversationViewState) => void;
+  queueCheckpoint?: (state: ConversationViewState, contextUsageTokens?: number) => void;
   persist?: (state: ConversationViewState) => Promise<boolean | undefined>;
   restoreComposer?: (
     composerText: string | undefined,
@@ -104,6 +105,32 @@ export type ManualContextUsageSnapshot = {
   totalTokens?: number;
   fixedTokens?: number;
 };
+
+function withActiveSummaryContextTokens(
+  state: ConversationViewState,
+  contextUsageTokens: number,
+): ConversationViewState {
+  const segment = state.segments[state.activeSegmentIndex];
+  if (!segment?.summary) return state;
+  const nextSegment = {
+    ...segment,
+    summary: {
+      ...segment.summary,
+      summaryMeta: {
+        ...segment.summary.summaryMeta,
+        stats: {
+          ...(segment.summary.summaryMeta.stats ?? {
+            sourceMessageCount: segment.summary.summaryMeta.coveredMessageCount,
+          }),
+          contextTokensAfter: contextUsageTokens,
+        },
+      },
+    },
+  };
+  const segments = state.segments.slice();
+  segments[state.activeSegmentIndex] = nextSegment;
+  return { ...state, segments };
+}
 
 type RollbackSnapshot = {
   state: ConversationViewState;
@@ -186,6 +213,29 @@ export class CompactionController {
     this.updateTurnMeta(state);
   }
 
+  /**
+   * Record authoritative assistant usage and advance the same ledger consumed
+   * by compaction decisions and the read-only context ring. Render-only
+   * messages may still be appended to the ledger as estimates, but only a real
+   * provider usage value is persisted as a message anchor.
+   */
+  observeContextMessages(messages: readonly Message[]) {
+    for (const message of messages) {
+      if (message.role === "assistant") {
+        const observedTokens = getUsageTotalTokens(message.usage);
+        if (observedTokens !== undefined) {
+          writeAssistantContextUsage(message, {
+            totalTokens: observedTokens,
+            fixedTokens: this.ledger.snapshot().fixedTokens,
+          });
+        }
+      }
+    }
+    this.ledger.addMessages(messages);
+    this.notifyContextUsage();
+    return this.contextUsageTokens;
+  }
+
   // O(1)：账本读数 + 流式增量估算 + 纯决策，无状态构建、无序列化。
   // pendingTokenUnits 由调用方按流式 delta 用 estimateTextTokenUnits 累加。
   shouldProtectMidStream(pendingTokenUnits: number): boolean {
@@ -260,15 +310,25 @@ export class CompactionController {
         complete: binding.complete,
       });
 
-      await this.persistCheckpoint(binding, outcome.state);
+      const checkpointContext = binding.buildPreparedContext(
+        outcome.state,
+        params.tools,
+        buildOptions,
+      );
+      this.rebaseLedger(checkpointContext);
+      const checkpointState = withActiveSummaryContextTokens(
+        outcome.state,
+        this.contextUsageTokens ?? 0,
+      );
+      await this.persistCheckpoint(binding, checkpointState);
       this.rollbackSnapshot = null;
-      const appliedState = presend.composeAppliedState(outcome.state);
-      binding.sinks.applyState?.(appliedState);
+      const appliedCheckpointState = presend.composeAppliedState(checkpointState);
+      binding.sinks.applyState?.(appliedCheckpointState);
       this.settleCompleted("pre-send", outcome.newSegmentIndex);
-      binding.sinks.queueCheckpoint?.(outcome.state);
+      binding.sinks.queueCheckpoint?.(checkpointState, this.contextUsageTokens);
       this.notePostCompactionPressure(
-        binding.buildPreparedContext(appliedState, params.tools, buildOptions),
-        appliedState,
+        binding.buildPreparedContext(appliedCheckpointState, params.tools, buildOptions),
+        appliedCheckpointState,
         decision.threshold,
       );
       return true;
@@ -408,11 +468,21 @@ export class CompactionController {
         complete: binding.complete,
       });
 
-      await this.persistCheckpoint(binding, outcome.state);
+      const checkpointContext = binding.buildPreparedContext(
+        outcome.state,
+        params.tools,
+        buildOptions,
+      );
+      this.rebaseLedger(checkpointContext);
+      const checkpointState = withActiveSummaryContextTokens(
+        outcome.state,
+        this.contextUsageTokens ?? 0,
+      );
+      await this.persistCheckpoint(binding, checkpointState);
       this.rollbackSnapshot = null;
-      binding.sinks.applyStateMidRun?.(outcome.state);
+      binding.sinks.applyStateMidRun?.(checkpointState);
       this.settleCompleted(params.trigger, outcome.newSegmentIndex);
-      binding.sinks.queueCheckpoint?.(outcome.state);
+      binding.sinks.queueCheckpoint?.(checkpointState, this.contextUsageTokens);
 
       const resumeMessage = createSyntheticContinueUserMessage(
         (outcome.checkpointMessage.timestamp ?? now) + 1,

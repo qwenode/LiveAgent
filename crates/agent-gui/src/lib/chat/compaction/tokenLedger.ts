@@ -1,6 +1,7 @@
 import type { Context, Message, Usage } from "@earendil-works/pi-ai";
 
 import { isCompactionAssistantMessage } from "../conversation/conversationState";
+import { readMessageContextUsage } from "./contextUsageMetadata";
 
 const CHARS_PER_TOKEN = 4;
 // CJK 文字的 token 密度远高于西文：主流 tokenizer（o200k/cl100k/Claude）大约
@@ -148,7 +149,7 @@ export function getMessageObservedTokens(message: Message): number | undefined {
   // （布尔化避免类型谓词在 else 分支把 AssistantMessage 收窄成 never。）
   const isCheckpoint: boolean = isCompactionAssistantMessage(message);
   if (isCheckpoint) return undefined;
-  return getUsageTotalTokens(message.usage);
+  return readMessageContextUsage(message)?.totalTokens ?? getUsageTotalTokens(message.usage);
 }
 
 export type TokenLedgerSnapshot = {

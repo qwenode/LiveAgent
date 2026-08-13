@@ -1,6 +1,8 @@
 export const CONTEXT_USAGE_WARN_RATIO = 0.5;
 export const CONTEXT_USAGE_DANGER_RATIO = 0.8;
 
+export { positiveTokenCount } from "./contextUsageMetadata";
+
 export type ContextUsageLevel = "ok" | "warn" | "danger";
 
 export function contextUsageRatio(

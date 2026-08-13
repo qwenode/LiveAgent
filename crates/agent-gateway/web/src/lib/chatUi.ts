@@ -1,3 +1,4 @@
+import { positiveTokenCount } from "@liveagent/ui/lib/chat/contextUsageMetadata";
 import { createUuid } from "@liveagent/ui/lib/shared/id";
 import type { Message, ToolCall, ToolResultMessage, Usage } from "@/lib/agentTypes";
 import type { HistoryMessageRef } from "@/lib/chat/conversationState";
@@ -40,6 +41,8 @@ export type ChatEntry =
         model: string;
         promptVersion?: string;
       };
+      contextUsageTokens?: number;
+      contextRelevant?: boolean;
       timestamp?: number;
     }
   | {
@@ -91,6 +94,7 @@ type StoredMessage = {
   timestamp?: unknown;
   summaryMeta?: unknown;
   liveAgentHistoryRef?: unknown;
+  liveAgentContextUsage?: unknown;
 };
 
 function readMessageTimestamp(value: unknown): number | undefined {
@@ -397,20 +401,27 @@ export function buildAssistantMeta(params: {
   api?: unknown;
   stopReason?: unknown;
   usage?: unknown;
+  contextUsageTokens?: unknown;
+  contextRelevant?: unknown;
 }) {
   const usage =
     params.usage && typeof params.usage === "object" ? (params.usage as Usage) : undefined;
-
-  const meta: AssistantMeta = {
-    provider: readString(params.provider) || undefined,
-    model: readString(params.model) || undefined,
-    api: readString(params.api) || undefined,
-    stopReason: readString(params.stopReason) || undefined,
-    usage,
-    usageTotalTokens: getUsageTotalTokens(params.usage),
-  };
-
-  return Object.values(meta).some((value) => value !== undefined) ? meta : undefined;
+  const meta: AssistantMeta = {};
+  const provider = readString(params.provider) || undefined;
+  const model = readString(params.model) || undefined;
+  const api = readString(params.api) || undefined;
+  const stopReason = readString(params.stopReason) || undefined;
+  const usageTotalTokens = getUsageTotalTokens(params.usage);
+  const contextUsageTokens = positiveTokenCount(params.contextUsageTokens);
+  if (provider !== undefined) meta.provider = provider;
+  if (model !== undefined) meta.model = model;
+  if (api !== undefined) meta.api = api;
+  if (stopReason !== undefined) meta.stopReason = stopReason;
+  if (usage !== undefined) meta.usage = usage;
+  if (usageTotalTokens !== undefined) meta.usageTotalTokens = usageTotalTokens;
+  if (contextUsageTokens !== undefined) meta.contextUsageTokens = contextUsageTokens;
+  if (typeof params.contextRelevant === "boolean") meta.contextRelevant = params.contextRelevant;
+  return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
 export function normalizeCheckpointEntry(params: {
@@ -435,6 +446,10 @@ export function normalizeCheckpointEntry(params: {
     readString(params.checkpoint?.summaryId).trim() ||
     params.fallbackId ||
     randomId("checkpoint");
+  const summaryStats = asRecord(summaryMetaRecord.stats);
+  const contextUsageTokens = positiveTokenCount(
+    params.checkpoint?.contextUsageTokens ?? summaryStats.contextTokensAfter,
+  );
   const coveredMessageCountCandidate =
     typeof params.checkpoint?.coveredMessageCount === "number"
       ? params.checkpoint.coveredMessageCount
@@ -462,6 +477,7 @@ export function normalizeCheckpointEntry(params: {
       model,
       promptVersion,
     },
+    contextUsageTokens,
     timestamp,
   };
 }
@@ -775,6 +791,7 @@ export function parseHistoryMessagesJson(raw: string): ChatEntry[] {
         api: message.api,
         stopReason: message.stopReason,
         usage: message.usage,
+        contextUsageTokens: asRecord(message.liveAgentContextUsage).totalTokens,
       });
       let textBuffer = "";
       let metaEmitted = false;
