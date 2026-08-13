@@ -7,11 +7,12 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
+use crate::runtime::platform::strip_windows_verbatim_prefix;
 use crate::runtime::process::configure_child_process_group;
 
 fn git_command(cwd: &Path) -> Command {
     let mut command = Command::new("git");
-    command.current_dir(cwd);
+    command.current_dir(strip_windows_verbatim_prefix(cwd.to_path_buf()));
     configure_child_process_group(&mut command);
     command
 }
@@ -280,12 +281,14 @@ fn canonicalize_git_path(cwd: &Path, raw: &str, label: &str) -> Result<PathBuf, 
     } else {
         cwd.join(path)
     };
-    fs::canonicalize(&absolute).map_err(|_| {
-        format!(
-            "{label} must resolve to an existing path: {}",
-            display_path(&absolute)
-        )
-    })
+    fs::canonicalize(&absolute)
+        .map(strip_windows_verbatim_prefix)
+        .map_err(|_| {
+            format!(
+                "{label} must resolve to an existing path: {}",
+                display_path(&absolute)
+            )
+        })
 }
 
 fn canonicalize_existing_dir(input: &str, label: &str) -> Result<PathBuf, String> {
@@ -297,8 +300,10 @@ fn canonicalize_existing_dir(input: &str, label: &str) -> Result<PathBuf, String
     if !path.is_absolute() {
         return Err(format!("{label} must be an absolute path: {raw}"));
     }
-    let canonical = fs::canonicalize(&path)
-        .map_err(|_| format!("{label} must be an existing directory: {raw}"))?;
+    let canonical = strip_windows_verbatim_prefix(
+        fs::canonicalize(&path)
+            .map_err(|_| format!("{label} must be an existing directory: {raw}"))?,
+    );
     let metadata = fs::metadata(&canonical)
         .map_err(|_| format!("{label} must be an existing directory: {raw}"))?;
     if !metadata.is_dir() {
@@ -380,7 +385,16 @@ fn is_worktree_name_collision(message: &str) -> bool {
 }
 
 fn display_path(path: &Path) -> String {
-    path.to_string_lossy().to_string()
+    let normalized = strip_windows_verbatim_prefix(path.to_path_buf())
+        .to_string_lossy()
+        .replace('\\', "/");
+    if let Some(rest) = normalized.strip_prefix("//?/UNC/") {
+        return format!("//{rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("//?/") {
+        return rest.to_string();
+    }
+    normalized
 }
 
 fn truncate_chars(input: String, max_chars: usize) -> (String, bool) {
@@ -922,7 +936,7 @@ fn cleanup_worktree_target_blocking(
     }
 
     let worktree_root = match fs::canonicalize(&raw_path) {
-        Ok(path) => path,
+        Ok(path) => strip_windows_verbatim_prefix(path),
         Err(err) => {
             item.error = Some(format!("failed to canonicalize worktreeRoot: {err}"));
             return item;
@@ -945,6 +959,7 @@ fn cleanup_worktree_target_blocking(
         .and_then(|paths| {
             paths.into_iter().find(|candidate| {
                 fs::canonicalize(candidate)
+                    .map(strip_windows_verbatim_prefix)
                     .map(|canonical| canonical != worktree_root)
                     .unwrap_or(false)
             })
@@ -1111,8 +1126,10 @@ pub async fn subagent_worktree_create(
             })?
         };
 
-        let worktree_root = fs::canonicalize(&target)
-            .map_err(|err| format!("failed to canonicalize worktree: {err}"))?;
+        let worktree_root = strip_windows_verbatim_prefix(
+            fs::canonicalize(&target)
+                .map_err(|err| format!("failed to canonicalize worktree: {err}"))?,
+        );
         let child_workdir = worktree_root.join(relative_workdir);
         let child_metadata = fs::metadata(&child_workdir).map_err(|_| {
             format!(
@@ -1219,6 +1236,21 @@ mod tests {
         assert_eq!(sanitize_path_component("aux.txt", "repo"), "aux-item.txt");
         assert_eq!(sanitize_path_component("LPT9", "repo"), "LPT9-item");
         assert_eq!(sanitize_path_component("COM0", "repo"), "COM0");
+    }
+
+    #[test]
+    fn display_path_uses_forward_slashes() {
+        assert_eq!(display_path(Path::new(r"C:\data\repo")), "C:/data/repo");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn display_path_strips_windows_verbatim_prefixes() {
+        assert_eq!(display_path(Path::new(r"\\?\C:\data\repo")), "C:/data/repo");
+        assert_eq!(
+            display_path(Path::new(r"\\?\UNC\server\share\repo")),
+            "//server/share/repo"
+        );
     }
 
     fn add_worktree(repo: &Path, worktree: &Path) -> Result<(), String> {
