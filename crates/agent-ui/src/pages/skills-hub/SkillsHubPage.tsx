@@ -141,7 +141,42 @@ const EXTERNAL_TOOL_LABELS: Record<string, string> = {
 const STORE_PAGE_LIMIT = 24;
 const INSTALLED_SKILL_PREVIEW_LINES = 10_000;
 const COPY_FEEDBACK_MS = 1600;
+const SCAN_FEEDBACK_DURATION_MS = 6500;
 const EMPTY_SKILLS: SkillSummary[] = [];
+
+type SkillScanFeedback =
+  | { status: "success"; total: number; added: number; updated: number; removed: number }
+  | { status: "error"; message: string };
+
+function summarizeSkillScan(previous: SkillSummary[], next: SkillSummary[]) {
+  const signature = (skill: SkillSummary) =>
+    [
+      skill.name,
+      skill.baseDir,
+      skill.skillFile,
+      skill.description,
+      skill.builtIn ? "1" : "0",
+      skill.inlineContent?.length ?? -1,
+      skill.source?.registry ?? "",
+      skill.source?.slug ?? "",
+      skill.installedAt ?? "",
+      skill.source?.version ?? "",
+    ].join("\0");
+  const previousByKey = new Map(previous.map((skill) => [skill.baseDir || skill.name, signature(skill)]));
+  const nextByKey = new Map(next.map((skill) => [skill.baseDir || skill.name, signature(skill)]));
+  let added = 0;
+  let updated = 0;
+  let removed = 0;
+  for (const [key, value] of nextByKey) {
+    const previousValue = previousByKey.get(key);
+    if (previousValue === undefined) added += 1;
+    else if (previousValue !== value) updated += 1;
+  }
+  for (const key of previousByKey.keys()) {
+    if (!nextByKey.has(key)) removed += 1;
+  }
+  return { total: next.length, added, updated, removed };
+}
 const TERMINAL_INSTALL_PHASES = new Set(["done", "error", "cancelled"]);
 const STORE_SORT_OPTIONS: Array<{ value: ClawHubSort; labelKey: string }> = [
   { value: "downloads", labelKey: "settings.skillsStoreSortMostDownloaded" },
@@ -1281,11 +1316,35 @@ export function SkillsHubPage(props: SkillsHubPageProps) {
   const [importedCount, setImportedCount] = useState<number | null>(null);
   const [importToast, setImportToast] = useState<string | null>(null);
   const importToastTimerRef = useRef<number | null>(null);
+  const [scanFeedback, setScanFeedback] = useState<SkillScanFeedback | null>(null);
+  const scanFeedbackTimerRef = useRef<number | null>(null);
   const [previewInstalledSkill, setPreviewInstalledSkill] = useState<SkillSummary | null>(null);
   const [installedPreviewState, setInstalledPreviewState] = useState<InstalledSkillPreviewState>(
     () => emptyInstalledSkillPreviewState(),
   );
   const discoverySignatureRef = useRef<string | null>(null);
+  const skillsSnapshotRef = useRef<SkillSummary[]>(initialSkills ?? []);
+
+  const showScanFeedback = useCallback((feedback: SkillScanFeedback) => {
+    if (scanFeedbackTimerRef.current !== null) {
+      window.clearTimeout(scanFeedbackTimerRef.current);
+    }
+    setScanFeedback(feedback);
+    scanFeedbackTimerRef.current = window.setTimeout(() => {
+      setScanFeedback(null);
+      scanFeedbackTimerRef.current = null;
+    }, SCAN_FEEDBACK_DURATION_MS);
+  }, []);
+
+  const dismissScanFeedback = useCallback(() => {
+    if (scanFeedbackTimerRef.current !== null) {
+      window.clearTimeout(scanFeedbackTimerRef.current);
+      scanFeedbackTimerRef.current = null;
+    }
+    setScanFeedback(null);
+  }, []);
+
+  useEffect(() => () => dismissScanFeedback(), [dismissScanFeedback]);
 
   // 唯一写入点：setState 与 discoverySignatureRef 必须同步更新，防止签名与状态漂移。
   // 签名未变时跳过 setState，保持 skills 数组引用稳定（下游 memo 链与 store 轮询零重渲）。
@@ -1293,6 +1352,7 @@ export function SkillsHubPage(props: SkillsHubPageProps) {
     const signature = buildSkillDiscoverySignature(nextRootDir, nextSkills);
     const changed = discoverySignatureRef.current !== signature;
     discoverySignatureRef.current = signature;
+    skillsSnapshotRef.current = nextSkills;
     if (changed) {
       setSkills(nextSkills);
       setRootDir(nextRootDir);
@@ -1301,9 +1361,10 @@ export function SkillsHubPage(props: SkillsHubPageProps) {
   }, []);
 
   const refresh = useCallback(
-    async (options?: { silent?: boolean }) => {
+    async (options?: { silent?: boolean; announce?: boolean }) => {
       if (lockedByChatMode) {
         setSkills([]);
+        skillsSnapshotRef.current = [];
         setRootDir("");
         setLoadError(null);
         setLoading(false);
@@ -1311,35 +1372,47 @@ export function SkillsHubPage(props: SkillsHubPageProps) {
         return;
       }
       const silent = options?.silent === true;
+      const announce = options?.announce === true;
+      const previousSkills = skillsSnapshotRef.current;
       if (!silent) {
         setLoading(true);
       }
       setLoadError(null);
       try {
         const discovery = await discoverSkills({ force: true });
+        const summary = summarizeSkillScan(previousSkills, discovery.skills);
         const changed = applyDiscovery(discovery.rootDir, discovery.skills);
         if (changed) {
           notifySkillsDiscoveryUpdated();
         }
+        if (announce) {
+          showScanFeedback({ status: "success", ...summary });
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setSkills([]);
+        skillsSnapshotRef.current = [];
         // 失败清空列表后必须同步重置签名，否则下一次成功刷新若内容与
         // 失败前相同会被 applyDiscovery 视为“未变化”而跳过 setState。
         discoverySignatureRef.current = buildSkillDiscoverySignature("", []);
-        setLoadError(msg || t("settings.skillsHubLoadFailed"));
+        const message = msg || t("settings.skillsHubLoadFailed");
+        setLoadError(message);
+        if (announce) {
+          showScanFeedback({ status: "error", message });
+        }
       } finally {
         if (!silent) {
           setLoading(false);
         }
       }
     },
-    [applyDiscovery, lockedByChatMode, t],
+    [applyDiscovery, lockedByChatMode, showScanFeedback, t],
   );
 
   useEffect(() => {
     if (initialSkills && initialSkills.length > 0) {
       setSkills(initialSkills);
+      skillsSnapshotRef.current = initialSkills;
       discoverySignatureRef.current = buildSkillDiscoverySignature(
         initialRootDir ?? "",
         initialSkills,
@@ -2375,6 +2448,51 @@ export function SkillsHubPage(props: SkillsHubPageProps) {
   return (
     <div className="hub-page hub-page-enter relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       <HubBackdrop tone="amber" />
+      {scanFeedback ? (
+        <div className="pointer-events-none absolute bottom-5 left-4 right-4 z-50 flex justify-end sm:left-auto sm:right-6">
+          <div
+            className={cn(
+              "notify-toast-enter pointer-events-auto flex w-full max-w-sm items-start gap-2.5 rounded-lg border bg-background px-3 py-2.5 text-sm shadow-xl",
+              scanFeedback.status === "success" ? "border-emerald-600/30" : "border-destructive/30",
+            )}
+            role={scanFeedback.status === "error" ? "alert" : "status"}
+            aria-live={scanFeedback.status === "error" ? "assertive" : "polite"}
+          >
+            <div className="min-w-0 flex-1">
+              <div className="font-medium text-foreground">
+                {scanFeedback.status === "success"
+                  ? t("settings.skillsScanComplete")
+                  : t("settings.skillsScanFailed")}
+              </div>
+              <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                {scanFeedback.status === "success" ? (
+                  <>
+                    {t("settings.skillsScanFound").replace("{count}", String(scanFeedback.total))}
+                    <span aria-hidden="true"> · </span>
+                    {scanFeedback.added + scanFeedback.updated + scanFeedback.removed > 0
+                      ? t("settings.skillsScanChanged")
+                          .replace("{added}", String(scanFeedback.added))
+                          .replace("{updated}", String(scanFeedback.updated))
+                          .replace("{removed}", String(scanFeedback.removed))
+                      : t("settings.skillsScanNoChanges")}
+                  </>
+                ) : (
+                  scanFeedback.message
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={dismissScanFeedback}
+              className="mt-0.5 shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              aria-label={t("settings.close")}
+              title={t("settings.close")}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="relative z-10 flex h-full min-h-0 flex-col overflow-hidden">
         <HubHeader
@@ -2479,9 +2597,9 @@ export function SkillsHubPage(props: SkillsHubPageProps) {
                       "h-8 shrink-0 gap-1.5 rounded-full border-border/50 bg-background/70 px-3 backdrop-blur-md",
                       loading && "border-border/60 bg-background/85 text-foreground",
                     )}
-                    onClick={() => void refresh()}
+                    onClick={() => void refresh({ announce: true })}
                     disabled={loading || lockedByChatMode}
-                    title={loading ? t("settings.skillsScanning") : t("settings.skillsScan")}
+                    title={loading ? t("settings.skillsScanning") : t("settings.skillsScanHint")}
                   >
                     <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
                     <span className="hidden sm:inline-grid items-center">
@@ -2719,7 +2837,7 @@ export function SkillsHubPage(props: SkillsHubPageProps) {
                                 variant="outline"
                                 size="sm"
                                 className="mt-1 gap-1.5 rounded-full"
-                                onClick={() => void refresh()}
+                                onClick={() => void refresh({ announce: true })}
                               >
                                 <RefreshCw className="h-3.5 w-3.5" />
                                 {t("settings.skillsRescan")}
