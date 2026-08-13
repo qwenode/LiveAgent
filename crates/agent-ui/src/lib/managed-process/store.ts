@@ -55,6 +55,7 @@ export function feedManagedProcessState(next: ManagedProcessState) {
 
 /** Idempotent: subscribes to backend change events and loads the initial snapshot. */
 export function ensureManagedProcessInit(): Promise<void> {
+  hookVisibilityRefresh();
   if (!initPromise) {
     initPromise = (async () => {
       const unsubscribe = backend.subscribe(feedManagedProcessState);
@@ -72,6 +73,29 @@ export function ensureManagedProcessInit(): Promise<void> {
     });
   }
   return initPromise;
+}
+
+/**
+ * Pull a fresh authoritative snapshot into the mirror. This also retries a
+ * failed initialization because ensureManagedProcessInit resets its promise
+ * after a failed fetch.
+ */
+export async function refreshManagedProcessState(): Promise<void> {
+  await ensureManagedProcessInit();
+  feedManagedProcessState(await backend.fetchState());
+}
+
+let visibilityHooked = false;
+
+function hookVisibilityRefresh() {
+  if (visibilityHooked || typeof document === "undefined") return;
+  visibilityHooked = true;
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    refreshManagedProcessState().catch(() => {
+      // Keep the last authoritative mirror while the agent is unavailable.
+    });
+  });
 }
 
 export async function stopManagedProcess(id: string): Promise<void> {

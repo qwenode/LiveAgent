@@ -2924,6 +2924,7 @@ export class GatewayWebSocketClient {
         this.sftpTransferListeners.size > 0 ||
         this.chatActivityListeners.size > 0 ||
         this.tunnelStateListeners.size > 0 ||
+        this.processStateListeners.size > 0 ||
         this.workspaceActivityListeners.size > 0 ||
         this.conversationStreams.size > 0)
     );
@@ -3923,6 +3924,10 @@ export type GatewayWebSocketClientLike = {
 
 let activeClient: GatewayWebSocketClient | null = null;
 let activeToken = "";
+// resetGatewayWebSocketClient clears the singleton without firing a replacement
+// event; remember that a client existed so the next create can reattach
+// module-scoped stores after reset→create (for example logout→login).
+let everHadClient = false;
 const clientReplacedListeners = new Set<() => void>();
 
 /**
@@ -3942,10 +3947,11 @@ export function getGatewayWebSocketClient(token: string): GatewayWebSocketClient
   if (activeClient && activeToken === normalizedToken) {
     return activeClient;
   }
-  const replaced = activeClient !== null;
+  const replaced = everHadClient;
   activeClient?.dispose();
   activeToken = normalizedToken;
   activeClient = new GatewayWebSocketClient(normalizedToken);
+  everHadClient = true;
   if (replaced) {
     // The new instance is already installed, so re-entrant
     // getGatewayWebSocketClient calls from listeners hit the fast path.

@@ -115,10 +115,18 @@ function waitFor(predicate, label) {
 function loadGatewaySocket() {
   const loader = createWebModuleLoader();
   const codec = createGatewayV2Codec(loader);
-  const { getGatewayWebSocketClient, resetGatewayWebSocketClient } = loader.loadModule(
-    "src/lib/gatewaySocket.ts",
-  );
-  return { loader, codec, getGatewayWebSocketClient, resetGatewayWebSocketClient };
+  const {
+    getGatewayWebSocketClient,
+    onGatewayWebSocketClientReplaced,
+    resetGatewayWebSocketClient,
+  } = loader.loadModule("src/lib/gatewaySocket.ts");
+  return {
+    loader,
+    codec,
+    getGatewayWebSocketClient,
+    onGatewayWebSocketClientReplaced,
+    resetGatewayWebSocketClient,
+  };
 }
 
 function frames(codec, socket) {
@@ -197,6 +205,27 @@ test("GatewayWebSocketClient authenticates via hello and sends status_get over /
   const status = await statusPromise;
   assert.equal(status.online, true);
   assert.equal(status.agent_id, "desktop-agent");
+  resetGatewayWebSocketClient();
+});
+
+test("gateway singleton notifies stores after reset then create", () => {
+  installBrowser();
+  const { getGatewayWebSocketClient, onGatewayWebSocketClientReplaced, resetGatewayWebSocketClient } =
+    loadGatewaySocket();
+  resetGatewayWebSocketClient();
+
+  let replacements = 0;
+  const detach = onGatewayWebSocketClientReplaced(() => {
+    replacements += 1;
+  });
+  const first = getGatewayWebSocketClient("token-a");
+  assert.equal(replacements, 0);
+  resetGatewayWebSocketClient();
+  const second = getGatewayWebSocketClient("token-a");
+  assert.notEqual(first, second);
+  assert.equal(replacements, 1);
+
+  detach();
   resetGatewayWebSocketClient();
 });
 
