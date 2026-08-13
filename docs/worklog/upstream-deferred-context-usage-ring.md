@@ -32,8 +32,10 @@ The upstream context-usage feature is a multi-commit runtime/UI migration. The l
 ### `d1550008` / `972d7b6e` — mobile tooltip and ring animation polish
 
 - **Upstream files:** `ContextUsageRing.tsx`, `label-tooltip.tsx`, `confirm-action-popover.tsx`, GUI/Gateway CSS.
-- **Local reason for deferral:** these commits depend on the unported ring and tooltip interaction model. Applying them alone would add dead or incompatible styles/components.
-- **Follow-up:** apply after a local ring exists, preserving host-specific CSS and reduced-motion conventions.
+- **Initial local reason for deferral:** these commits depended on the local ring and tooltip interaction model, so applying them before the read-only ring existed would add dead or incompatible styles/components.
+- **P1 adaptation landed:** the local read-only ring now uses a shared `LabelTooltip`, two-line usage details, controlled touch open/close behavior, focus-visible affordances, and reduced-motion-safe SVG/CSS transitions. The implementation deliberately omits upstream manual-compaction confirmation and `ConfirmActionPopover` wiring; the ring remains display-only and `CompactionController` remains the sole state source.
+- **Validation:** `context-usage.test.mjs`, `context-usage-ring-polish.test.mjs`, and `composer-control-rail.test.mjs` pass; GUI TypeScript and `git diff --check` pass.
+- **Still deferred:** upstream manual-compaction interaction, confirm-action changes, and any Gateway usage-data contract remain part of the later Controller/manual-compaction task.
 
 ### `079672c5` — duplicate checkpoint prevention
 

@@ -963,6 +963,30 @@ html[data-liveagent-webui="gateway"] [role="textbox"]:focus-visible {
   animation: confirmPopoverOut 0.12s cubic-bezier(0.4, 0, 1, 1) both;
 }
 
+.label-tooltip-popup {
+  --label-tooltip-slide-y: -4px;
+  transform-origin: var(--transform-origin);
+  transition:
+    opacity 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.label-tooltip-popup[data-side="top"] {
+  --label-tooltip-slide-y: 4px;
+}
+
+.label-tooltip-popup[data-starting-style],
+.label-tooltip-popup[data-ending-style] {
+  opacity: 0;
+  transform: translateY(var(--label-tooltip-slide-y)) scale(0.96);
+}
+
+.label-tooltip-popup[data-ending-style] {
+  transition-duration: 0.1s;
+  transition-timing-function: cubic-bezier(0.4, 0, 1, 1);
+  transform: translateY(calc(var(--label-tooltip-slide-y) / 2)) scale(0.98);
+}
+
 @keyframes confirmPopoverIn {
   from {
     opacity: 0;
@@ -987,8 +1011,10 @@ html[data-liveagent-webui="gateway"] [role="textbox"]:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .settings-confirm-popover,
-  .settings-confirm-popover[data-closing] {
+  .settings-confirm-popover[data-closing],
+  .label-tooltip-popup {
     animation: none;
+    transition: none;
   }
 }
 
