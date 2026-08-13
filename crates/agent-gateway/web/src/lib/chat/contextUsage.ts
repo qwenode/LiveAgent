@@ -13,7 +13,16 @@ export function deriveGatewayContextUsageTokens(
 ): number | undefined {
   for (let rowIndex = rows.length - 1; rowIndex >= 0; rowIndex -= 1) {
     const row = rows[rowIndex];
-    if (!row || row.kind !== "assistant") {
+    if (!row) {
+      continue;
+    }
+    if (row.kind === "checkpoint") {
+      if (typeof row.contextUsageTokens === "number" && Number.isFinite(row.contextUsageTokens)) {
+        return Math.max(0, Math.floor(row.contextUsageTokens));
+      }
+      continue;
+    }
+    if (row.kind !== "assistant") {
       continue;
     }
     for (let roundIndex = row.rounds.length - 1; roundIndex >= 0; roundIndex -= 1) {

@@ -85,7 +85,7 @@ type LiveTranscriptArtifacts = {
   lrFlushCancel: (() => void) | null;
   // Last-wins tool-status coalescing: a burst of status changes lands as one
   // store emit per frame.
-  pendingToolStatus: { value: string | null } | null;
+  pendingToolStatus: { value: string | null; isCompaction: boolean } | null;
   toolStatusFlushCancel: (() => void) | null;
   pendingRetryAttempts: { value: RetryAttemptRecord[] } | null;
   retryAttemptsFlushCancel: (() => void) | null;
@@ -202,7 +202,7 @@ export function useLiveTranscriptController(params: UseLiveTranscriptControllerP
       if (artifacts.pendingToolStatus) {
         const pending = artifacts.pendingToolStatus;
         artifacts.pendingToolStatus = null;
-        targetStore.setToolStatus(pending.value);
+        targetStore.setToolStatus(pending.value, pending.isCompaction);
       }
 
       artifacts.retryAttemptsFlushCancel?.();
@@ -356,16 +356,20 @@ export function useLiveTranscriptController(params: UseLiveTranscriptControllerP
   );
 
   const updateToolStatus = useCallback(
-    (status: string | null, targetStore: LiveTranscriptStore = liveTranscriptStore) => {
+    (
+      status: string | null,
+      targetStore: LiveTranscriptStore = liveTranscriptStore,
+      isCompaction = false,
+    ) => {
       const artifacts = resolveLiveTranscriptArtifacts(targetStore);
       if (!artifacts) {
-        targetStore.setToolStatus(status);
+        targetStore.setToolStatus(status, isCompaction);
         return;
       }
 
       // Last-wins: only the newest status of a frame reaches the store. A
       // pending flush (settle, abort snapshot) delivers it early.
-      artifacts.pendingToolStatus = { value: status };
+      artifacts.pendingToolStatus = { value: status, isCompaction };
       if (artifacts.toolStatusFlushCancel !== null) return;
 
       artifacts.toolStatusFlushCancel = scheduleLiveTranscriptFlush(() => {
@@ -373,7 +377,7 @@ export function useLiveTranscriptController(params: UseLiveTranscriptControllerP
         const pending = artifacts.pendingToolStatus;
         artifacts.pendingToolStatus = null;
         if (pending) {
-          targetStore.setToolStatus(pending.value);
+          targetStore.setToolStatus(pending.value, pending.isCompaction);
         }
       });
     },

@@ -23,6 +23,13 @@ export type GatewayTranscriptRound = UiRound & {
 export type ChatEntry =
   | {
       id: string;
+      kind: "runtime_state";
+      toolStatus?: string | null;
+      toolStatusIsCompaction?: boolean;
+      retryAttempts?: { attempt: number; maxAttempts: number; errorMessage: string }[];
+    }
+  | {
+      id: string;
       kind: "user";
       text: string;
       attachments: PendingUploadedFile[];

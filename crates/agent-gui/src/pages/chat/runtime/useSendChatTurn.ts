@@ -832,10 +832,16 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
     }
 
     function freezeGatewayFinalProjection(state: ConversationViewState, contentComplete = true) {
+      const liveSnapshot = transcriptStore.getSnapshot();
       const entries = buildGatewayFinalProjectionEntries({
         state,
         userMessage: pendingUserMessage,
         runId: gatewayBridgeRequestId,
+        runtimeState: {
+          toolStatus: liveSnapshot.toolStatus,
+          toolStatusIsCompaction: liveSnapshot.toolStatusIsCompaction,
+          retryAttempts: liveSnapshot.retryAttempts,
+        },
       });
       frozenGatewayFinalProjectionJson = JSON.stringify(entries);
       // The builder degrades to a user-only projection when it cannot locate
@@ -844,7 +850,6 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       // completeness — a confirmed-empty projection would erase the reply on
       // remote clients and block history convergence.
       const hasAssistantEntry = entries.some((entry) => entry.kind !== "user");
-      const liveSnapshot = transcriptStore.getSnapshot();
       const runProducedOutput =
         liveSnapshot.liveRounds.length > 0 || Boolean(liveSnapshot.draftAssistantText);
       frozenGatewayContentComplete = contentComplete && (hasAssistantEntry || !runProducedOutput);

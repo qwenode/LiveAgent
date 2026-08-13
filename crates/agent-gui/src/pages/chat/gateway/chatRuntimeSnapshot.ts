@@ -25,6 +25,20 @@ type GatewayAssistantMeta = {
   stopReason?: string;
   usage?: Usage;
   usageTotalTokens?: number;
+  contextUsageTokens?: number;
+  contextRelevant?: boolean;
+};
+
+export type GatewayRuntimeSnapshotRetryAttempt = {
+  attempt: number;
+  maxAttempts: number;
+  errorMessage: string;
+};
+
+export type GatewayRuntimeSnapshotRuntimeState = {
+  toolStatus?: string | null;
+  toolStatusIsCompaction?: boolean;
+  retryAttempts?: GatewayRuntimeSnapshotRetryAttempt[];
 };
 
 export type GatewayRuntimeSnapshotEntry =
@@ -36,6 +50,28 @@ export type GatewayRuntimeSnapshotEntry =
       messageId: string;
     }
   | { id: string; kind: "assistant"; text: string; round?: number; meta?: GatewayAssistantMeta }
+  | {
+      id: string;
+      kind: "checkpoint";
+      content: string;
+      summaryId: string;
+      coveredMessageCount: number;
+      generatedBy: {
+        providerId: string;
+        model: string;
+        promptVersion?: string;
+      };
+      contextUsageTokens?: number;
+      contextRelevant?: boolean;
+      timestamp?: number;
+    }
+  | {
+      id: string;
+      kind: "runtime_state";
+      toolStatus?: string | null;
+      toolStatusIsCompaction?: boolean;
+      retryAttempts?: GatewayRuntimeSnapshotRetryAttempt[];
+    }
   | { id: string; kind: "thinking"; text: string; round?: number }
   | {
       id: string;
@@ -70,6 +106,7 @@ export type GatewayFinalProjectionInput = {
   state: ConversationViewState;
   userMessage: Message;
   runId: string;
+  runtimeState?: GatewayRuntimeSnapshotRuntimeState;
 };
 
 function readMessageId(message: Message | undefined, fallback: string) {
@@ -252,6 +289,54 @@ function appendRoundEntries(
   flushText();
 }
 
+function buildRuntimeStateEntry(
+  state: Pick<
+    GatewayRuntimeSnapshotRuntimeState,
+    "toolStatus" | "toolStatusIsCompaction" | "retryAttempts"
+  >,
+): Extract<GatewayRuntimeSnapshotEntry, { kind: "runtime_state" }> | null {
+  const retryAttempts = (state.retryAttempts ?? [])
+    .filter(
+      (attempt) =>
+        Number.isFinite(attempt.attempt) &&
+        Number.isFinite(attempt.maxAttempts) &&
+        typeof attempt.errorMessage === "string",
+    )
+    .map((attempt) => ({
+      attempt: attempt.attempt,
+      maxAttempts: attempt.maxAttempts,
+      errorMessage: attempt.errorMessage,
+    }));
+  if (!state.toolStatus && !state.toolStatusIsCompaction && retryAttempts.length === 0) {
+    return null;
+  }
+  return {
+    id: "runtime-state",
+    kind: "runtime_state",
+    toolStatus: state.toolStatus,
+    toolStatusIsCompaction: state.toolStatusIsCompaction,
+    retryAttempts,
+  };
+}
+
+function buildSummaryCheckpointEntry(
+  summary: ConversationViewState["transcript"]["items"][number] & { kind: "summary" },
+  prefix: string,
+): Extract<GatewayRuntimeSnapshotEntry, { kind: "checkpoint" }> {
+  return {
+    id: `${prefix}-checkpoint-${summary.summaryId}`,
+    kind: "checkpoint",
+    content: summary.content,
+    summaryId: summary.summaryId,
+    coveredMessageCount: summary.coveredMessageCount,
+    generatedBy: summary.generatedBy,
+    ...(typeof summary.contextUsageTokens === "number" && summary.contextUsageTokens > 0
+      ? { contextUsageTokens: Math.floor(summary.contextUsageTokens) }
+      : {}),
+    timestamp: summary.timestamp,
+  };
+}
+
 function buildUserEntry(
   message: Message,
 ): Extract<GatewayRuntimeSnapshotEntry, { kind: "user" }> | null {
@@ -287,10 +372,7 @@ export function buildGatewayRuntimeSnapshotEntries(
     liveRounds.forEach((round, index) => {
       appendRoundEntries(entries, round, `runtime-live-${index}`);
     });
-    return entries;
-  }
-
-  if (input.liveTranscript.draftAssistantText) {
+  } else if (input.liveTranscript.draftAssistantText) {
     entries.push({
       id: "runtime-draft-assistant",
       kind: "assistant",
@@ -299,6 +381,10 @@ export function buildGatewayRuntimeSnapshotEntries(
     });
   }
 
+  const runtimeState = buildRuntimeStateEntry(input.liveTranscript);
+  if (runtimeState) {
+    entries.push(runtimeState);
+  }
   return entries;
 }
 
@@ -335,12 +421,22 @@ export function buildGatewayFinalProjectionEntries(
     if (item.kind === "user") {
       break;
     }
+    if (item.kind === "summary") {
+      entries.push(buildSummaryCheckpointEntry(item, `run-${input.runId}-summary-${index}`));
+      continue;
+    }
     if (item.kind !== "assistant") {
       continue;
     }
     for (const round of item.rounds) {
       appendRoundEntries(entries, round, `run-${input.runId}-assistant-${assistantGroupIndex}`);
       assistantGroupIndex += 1;
+    }
+  }
+  if (input.runtimeState) {
+    const runtimeState = buildRuntimeStateEntry(input.runtimeState);
+    if (runtimeState) {
+      entries.push(runtimeState);
     }
   }
   return entries;

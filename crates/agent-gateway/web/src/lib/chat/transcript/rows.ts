@@ -228,6 +228,9 @@ export function buildRowsFromEntries(
       continue;
     }
 
+    if (entry.kind === "runtime_state") {
+      continue;
+    }
     assistantGroup = ensureAssistantGroup(assistantGroup, entry.id);
     const roundNumber =
       entry.round ?? assistantGroup.rounds[assistantGroup.rounds.length - 1]?.round ?? 1;

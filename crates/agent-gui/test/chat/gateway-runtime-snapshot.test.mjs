@@ -25,10 +25,18 @@ test("gateway runtime snapshot projects live rounds into chat entries", () => {
     liveTranscript: {
       draftAssistantText: "",
       toolStatus: "Running shell",
+      retryAttempts: [
+        { attempt: 1, maxAttempts: 3, errorMessage: "temporary network failure" },
+      ],
       liveRounds: [
         {
           key: "round-1",
           round: 1,
+          meta: {
+            contextUsageTokens: 321,
+            contextRelevant: true,
+            usageTotalTokens: 300,
+          },
           runningToolCallIds: [],
           thinkingOpen: false,
           blocks: [
@@ -60,15 +68,20 @@ test("gateway runtime snapshot projects live rounds into chat entries", () => {
 
   assert.deepEqual(
     entries.map((entry) => entry.kind),
-    ["user", "thinking", "assistant", "tool_call", "tool_result", "assistant"],
+    ["user", "assistant", "thinking", "assistant", "tool_call", "tool_result", "assistant", "runtime_state"],
   );
+  assert.equal(entries.at(-1)?.toolStatus, "Running shell");
+  assert.deepEqual(entries.at(-1)?.retryAttempts, [
+    { attempt: 1, maxAttempts: 3, errorMessage: "temporary network failure" },
+  ]);
   assert.equal(entries[0].text, "Run the checks");
   assert.equal(entries[0].messageId, "user-1");
-  assert.equal(entries[1].text, "I will inspect the repo.");
-  assert.equal(entries[2].text, "I found the issue.");
-  assert.equal(entries[3].toolCall.name, "Shell");
-  assert.equal(entries[4].toolResult.toolCallId, "tool-1");
-  assert.equal(entries[5].text, " Next step is ready.");
+  assert.equal(entries[1].meta?.contextUsageTokens, 321);
+  assert.equal(entries[2].text, "I will inspect the repo.");
+  assert.equal(entries[3].text, "I found the issue.");
+  assert.equal(entries[4].toolCall.name, "Shell");
+  assert.equal(entries[5].toolResult.toolCallId, "tool-1");
+  assert.equal(entries[6].text, " Next step is ready.");
 });
 
 test("gateway runtime snapshot carries the same tool preview shape as bridge deltas", () => {
@@ -196,6 +209,11 @@ test("gateway final projection is frozen from the persisted conversation state",
   const entries = buildGatewayFinalProjectionEntries({
     runId: "run-final",
     userMessage,
+    runtimeState: {
+      toolStatus: null,
+      toolStatusIsCompaction: false,
+      retryAttempts: [],
+    },
     state: {
       meta: {},
       segments: [],
@@ -225,6 +243,18 @@ test("gateway final projection is frozen from the persisted conversation state",
             ],
           },
           {
+            kind: "summary",
+            key: "summary-row",
+            summaryId: "summary-final",
+            content: "Compressed context",
+            coveredMessageCount: 3,
+            coversThroughMessageId: "assistant-final",
+            generatedBy: { providerId: "provider", model: "model" },
+            contextUsageTokens: 144,
+            timestamp: 123,
+            collapsed: false,
+          },
+          {
             kind: "user",
             key: "next-user",
             messageRef: { messageId: "user-next" },
@@ -242,9 +272,11 @@ test("gateway final projection is frozen from the persisted conversation state",
 
   assert.deepEqual(
     entries.map((entry) => entry.kind),
-    ["user", "thinking", "assistant"],
+    ["user", "thinking", "assistant", "checkpoint"],
   );
   assert.equal(entries[1].text, "Checking files");
   assert.equal(entries[2].text, "The project is healthy.");
+  assert.equal(entries[3].contextUsageTokens, 144);
+  assert.equal(entries[3].summaryId, "summary-final");
   assert.equal(entries.some((entry) => entry.kind === "user" && entry.text === "Next prompt"), false);
 });

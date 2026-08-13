@@ -113,6 +113,7 @@ export type RenderSummaryCard = {
     model: string;
     promptVersion?: string;
   };
+  contextUsageTokens?: number;
   timestamp: number;
   collapsed: boolean;
 };

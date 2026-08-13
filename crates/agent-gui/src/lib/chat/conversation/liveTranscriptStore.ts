@@ -6,6 +6,7 @@ export type { RetryAttemptRecord } from "../../providers/runtime/streamRetry";
 export type LiveTranscriptState = {
   draftAssistantText: string;
   toolStatus: string | null;
+  toolStatusIsCompaction: boolean;
   liveRounds: LiveRound[];
   retryAttempts: RetryAttemptRecord[];
   isSettled: boolean;
@@ -17,7 +18,7 @@ export type LiveTranscriptStore = {
   reset: () => void;
   settle: () => void;
   appendDraftAssistantText: (delta: string) => void;
-  setToolStatus: (toolStatus: string | null) => void;
+  setToolStatus: (toolStatus: string | null, isCompaction?: boolean) => void;
   setRetryAttempts: (retryAttempts: RetryAttemptRecord[]) => void;
   updateLiveRounds: (updater: (prev: LiveRound[]) => LiveRound[]) => void;
 };
@@ -27,6 +28,7 @@ const EMPTY_RETRY_ATTEMPTS: RetryAttemptRecord[] = [];
 const EMPTY_ACTIVE_STATE: LiveTranscriptState = {
   draftAssistantText: "",
   toolStatus: null,
+  toolStatusIsCompaction: false,
   liveRounds: [],
   retryAttempts: EMPTY_RETRY_ATTEMPTS,
   isSettled: false,
@@ -61,6 +63,7 @@ export function createLiveTranscriptStore(
       if (
         state.draftAssistantText.length === 0 &&
         state.toolStatus === null &&
+        !state.toolStatusIsCompaction &&
         state.liveRounds.length === 0 &&
         state.retryAttempts.length === 0 &&
         !state.isSettled
@@ -74,6 +77,7 @@ export function createLiveTranscriptStore(
       if (
         state.draftAssistantText.length === 0 &&
         state.toolStatus === null &&
+        !state.toolStatusIsCompaction &&
         state.liveRounds.length === 0 &&
         state.retryAttempts.length === 0 &&
         state.isSettled
@@ -92,11 +96,18 @@ export function createLiveTranscriptStore(
       };
       emitChange();
     },
-    setToolStatus: (toolStatus) => {
-      if (state.toolStatus === toolStatus) return;
+    setToolStatus: (toolStatus, isCompaction = false) => {
+      const normalizedCompaction = Boolean(toolStatus?.trim()) && isCompaction;
+      if (
+        state.toolStatus === toolStatus &&
+        state.toolStatusIsCompaction === normalizedCompaction
+      ) {
+        return;
+      }
       state = {
         ...state,
         toolStatus,
+        toolStatusIsCompaction: normalizedCompaction,
         isSettled: toolStatus ? false : state.isSettled,
       };
       emitChange();

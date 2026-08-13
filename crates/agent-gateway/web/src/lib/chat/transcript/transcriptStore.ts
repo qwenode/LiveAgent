@@ -126,6 +126,18 @@ function normalizeRetryAttempts(raw: unknown): RetryAttemptRecord[] | null {
   return attempts;
 }
 
+type SnapshotRuntimeState = Extract<ChatEntry, { kind: "runtime_state" }>;
+
+function readSnapshotRuntimeState(entries: readonly ChatEntry[]): SnapshotRuntimeState | null {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.kind === "runtime_state") {
+      return entry;
+    }
+  }
+  return null;
+}
+
 // Streaming-delta commit cadence while the tab is hidden and rAF is frozen.
 const HIDDEN_COMMIT_DELAY_MS = 250;
 
@@ -679,18 +691,33 @@ export function createTranscriptStore(options?: {
 
   const rebuildActiveTurnFromSnapshot = (entriesJson: string, runId: string) => {
     const parsed = parseSnapshotEntries(entriesJson);
+    const runtimeState = readSnapshotRuntimeState(parsed);
+    const contentEntries = runtimeState
+      ? parsed.filter((entry) => entry.kind !== "runtime_state")
+      : parsed;
+    if (runtimeState) {
+      setToolStatus(
+        typeof runtimeState.toolStatus === "string" ? runtimeState.toolStatus : null,
+        runtimeState.toolStatusIsCompaction === true,
+        true,
+      );
+      const nextRetryAttempts = normalizeRetryAttempts(runtimeState.retryAttempts);
+      if (nextRetryAttempts !== null) {
+        setRetryAttempts(nextRetryAttempts, true);
+      }
+    }
     let turn =
       findTurnByRunId(runId) ??
       (activeRun?.clientRequestId ? findTurnByCri(activeRun.clientRequestId) : null);
     if (!turn) {
-      if (parsed.length === 0) {
+      if (contentEntries.length === 0) {
         return;
       }
       turn = createTurn({ key: `run:${runId}`, runId, phase: "streaming" });
       turns = [...turns, turn];
     }
     let next = adoptRun(turn, runId);
-    next = rebuildTurnFromSnapshot(next, parsed);
+    next = rebuildTurnFromSnapshot(next, contentEntries);
     if (next.inferredLossErrorEntryId) {
       next = { ...next, inferredLossErrorEntryId: undefined };
     }
@@ -740,15 +767,30 @@ export function createTranscriptStore(options?: {
       turns = [...turns, turn];
     }
     const inferredErrorEntryId = turn.inferredLossErrorEntryId;
+    const snapshotRuntimeState = readSnapshotRuntimeState(parsed ?? []);
+    if (snapshotRuntimeState) {
+      setToolStatus(
+        typeof snapshotRuntimeState.toolStatus === "string" ? snapshotRuntimeState.toolStatus : null,
+        snapshotRuntimeState.toolStatusIsCompaction === true,
+        true,
+      );
+      const nextRetryAttempts = normalizeRetryAttempts(snapshotRuntimeState.retryAttempts);
+      if (nextRetryAttempts !== null) {
+        setRetryAttempts(nextRetryAttempts, true);
+      }
+    }
+    const contentEntries = snapshotRuntimeState
+      ? parsed?.filter((entry) => entry.kind !== "runtime_state") ?? []
+      : parsed ?? [];
     const realErrorEntries = turn.entries.filter(
       (entry): entry is Extract<ChatEntry, { kind: "assistant" | "error" }> =>
         (entry.kind === "error" || (entry.kind === "assistant" && entry.id.includes(":err:"))) &&
         entry.id !== inferredErrorEntryId,
     );
     let next =
-      historyRequired && parsed.length === 0
+      historyRequired && contentEntries.length === 0
         ? adoptRun(turn, runId)
-        : rebuildTurnFromSnapshot(adoptRun(turn, runId), parsed);
+        : rebuildTurnFromSnapshot(adoptRun(turn, runId), contentEntries);
     if (realErrorEntries.length > 0) {
       const errorTexts = new Set(
         next.entries
@@ -1044,17 +1086,24 @@ export function createTranscriptStore(options?: {
           return;
         }
         rebuildActiveTurnFromSnapshot(payload.entries_json ?? "", runId);
+        const hasSnapshotToolStatus = Object.prototype.hasOwnProperty.call(payload, "tool_status");
+        const hasSnapshotCompaction = Object.prototype.hasOwnProperty.call(
+          payload,
+          "tool_status_is_compaction",
+        );
+        if (hasSnapshotToolStatus || hasSnapshotCompaction) {
+          const status = (event as { tool_status?: string | null }).tool_status ?? null;
+          setToolStatus(
+            typeof status === "string" ? status : null,
+            (event as { tool_status_is_compaction?: boolean }).tool_status_is_compaction === true,
+            true,
+          );
+        }
         if (asOfSeq > 0) {
           // The snapshot content covers the log through as_of_seq; drop the
           // overlapping tail of any concurrent replay.
           lastSeq = Math.max(lastSeq, asOfSeq);
         }
-        const status = (event as { tool_status?: string | null }).tool_status ?? null;
-        setToolStatus(
-          typeof status === "string" ? status : null,
-          (event as { tool_status_is_compaction?: boolean }).tool_status_is_compaction === true,
-          true,
-        );
         return;
       }
       case "tool_status": {
@@ -1402,6 +1451,21 @@ function isSnapshotChatEntry(value: unknown): value is ChatEntry {
       return v.toolResult != null && typeof v.toolResult === "object";
     case "hosted_search":
       return v.hostedSearch != null && typeof v.hostedSearch === "object";
+    case "checkpoint":
+      return (
+        typeof v.content === "string" &&
+        typeof v.summaryId === "string" &&
+        typeof v.coveredMessageCount === "number" &&
+        Number.isFinite(v.coveredMessageCount) &&
+        v.generatedBy != null &&
+        typeof v.generatedBy === "object"
+      );
+    case "runtime_state":
+      return (
+        (v.toolStatus === undefined || v.toolStatus === null || typeof v.toolStatus === "string") &&
+        (v.toolStatusIsCompaction === undefined || typeof v.toolStatusIsCompaction === "boolean") &&
+        (v.retryAttempts === undefined || Array.isArray(v.retryAttempts))
+      );
     default:
       return false;
   }

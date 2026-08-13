@@ -92,6 +92,7 @@ export type TranscriptRow =
         promptVersion?: string;
       };
       contextUsageTokens?: number;
+      contextRelevant?: boolean;
       timestamp?: number;
     }
   | { key: string; origin: TranscriptRowOrigin; kind: "error"; text: string };

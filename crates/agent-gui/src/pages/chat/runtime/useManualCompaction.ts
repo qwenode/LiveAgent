@@ -94,7 +94,11 @@ export function useManualCompaction(params: {
     updater: (prev: ConversationRuntimeEntry) => ConversationRuntimeEntry,
   ) => unknown;
   resetLiveTranscript: (store?: LiveTranscriptStore) => void;
-  updateToolStatus: (status: string | null, store?: LiveTranscriptStore) => void;
+  updateToolStatus: (
+    status: string | null,
+    store?: LiveTranscriptStore,
+    isCompaction?: boolean,
+  ) => void;
   persistConversation: (params: PersistConversationParams) => Promise<boolean>;
   activeAgentPrompt: string;
   resolvePromptInputs: (workdir: string) => Promise<PromptInputs>;
@@ -195,7 +199,7 @@ export function useManualCompaction(params: {
         }));
       },
       setBridgeToolStatus: (status, isCompaction = false) => {
-        updateToolStatus(status, transcriptStore);
+        updateToolStatus(status, transcriptStore, isCompaction);
         options?.bridge?.queueToolStatus(status, isCompaction);
       },
       queueCheckpoint: (state, contextUsageTokens) => {

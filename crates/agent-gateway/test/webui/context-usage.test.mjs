@@ -47,6 +47,16 @@ test("GatewayApp wires the read-only ring and manual compact command in every ex
   assert.doesNotMatch(source, /const composerInputDisabled =[\s\S]{0,180}composerCompactionBlocked;/);
 });
 
+test("Gateway context usage prefers the latest checkpoint total after compaction", () => {
+  assert.equal(
+    usage.deriveGatewayContextUsageTokens([
+      assistantRow([{ round: 1, blocks: [{ kind: "text", id: "t1", text: "x" }], meta: { usageTotalTokens: 12 } }]),
+      { key: "checkpoint-1", origin: "history", kind: "checkpoint", content: "summary", summaryId: "s1", coveredMessageCount: 1, contextUsageTokens: 88, generatedBy: { providerId: "p", model: "m" } },
+    ]),
+    88,
+  );
+});
+
 test("Gateway context usage ignores non-finite or missing usage", () => {
   assert.equal(
     usage.deriveGatewayContextUsageTokens([

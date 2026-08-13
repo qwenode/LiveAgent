@@ -944,6 +944,45 @@ test("reset sync rebuilds the active turn from a runtime snapshot", () => {
   assert.doesNotMatch(text, /will be lost/);
 });
 
+test("runtime snapshots restore checkpoint rows and embedded activity metadata", () => {
+  const store = createTranscriptStore();
+  store.applyEvent(
+    runContentSnapshot("run-meta", 1, 3, [
+      { id: "snapshot-user", kind: "user", text: "compact me", attachments: [] },
+      {
+        id: "snapshot-checkpoint",
+        kind: "checkpoint",
+        content: "compressed context",
+        summaryId: "summary-1",
+        coveredMessageCount: 4,
+        contextUsageTokens: 128,
+        generatedBy: { providerId: "provider", model: "model" },
+      },
+      { id: "snapshot-assistant", kind: "assistant", text: "continued", round: 1 },
+      {
+        id: "runtime-state",
+        kind: "runtime_state",
+        toolStatus: "Compacting context",
+        toolStatusIsCompaction: true,
+        retryAttempts: [{ attempt: 1, maxAttempts: 3, errorMessage: "temporary" }],
+      },
+    ]),
+  );
+  store.flush();
+
+  const snapshot = store.getSnapshot();
+  assert.equal(snapshot.needsHistoryRefresh, false);
+  assert.equal(snapshot.toolStatus, "Compacting context");
+  assert.equal(snapshot.toolStatusIsCompaction, true);
+  assert.deepEqual(snapshot.retryAttempts, [
+    { attempt: 1, maxAttempts: 3, errorMessage: "temporary" },
+  ]);
+  const checkpoint = allRows(snapshot).find((row) => row.kind === "checkpoint");
+  assert.equal(checkpoint?.summaryId, "summary-1");
+  assert.equal(checkpoint?.contextUsageTokens, 128);
+  assert.match(allRows(snapshot).map(rowText).join("\\n"), /continued/);
+});
+
 test("active sync trims a history-first copy of the running exchange", () => {
   const store = createTranscriptStore();
   store.applyHistorySnapshot(
