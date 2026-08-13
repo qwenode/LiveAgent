@@ -7,6 +7,7 @@ import {
   Globe2,
   Loader2,
   RefreshCw,
+  Search,
   Terminal,
 } from "@liveagent/app/components/icons";
 import { type AppSettings, type McpServerConfig, updateMcp } from "@liveagent/app/lib/settings";
@@ -79,6 +80,7 @@ export function McpImportView(props: {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [importedCount, setImportedCount] = useState<number | null>(null);
   const [activeTool, setActiveTool] = useState<string>("claude-code");
+  const [importQuery, setImportQuery] = useState("");
   const userChoseToolRef = useRef(false);
 
   const allScans = useMemo(
@@ -161,12 +163,29 @@ export function McpImportView(props: {
   }, []);
 
   const activeScan = allScans.find((scan) => scan.tool === activeTool);
+  const normalizedImportQuery = importQuery.trim().toLowerCase();
+  const visibleServers = useMemo(() => {
+    const servers = activeScan?.servers ?? [];
+    if (!normalizedImportQuery) return servers;
+    return servers.filter((server) =>
+      [
+        server.id,
+        server.transport,
+        server.command,
+        server.url,
+        server.origin,
+        ...server.args,
+        ...Object.keys(server.env),
+        ...Object.keys(server.headers),
+      ]
+        .join("\n")
+        .toLowerCase()
+        .includes(normalizedImportQuery),
+    );
+  }, [activeScan, normalizedImportQuery]);
   const importableInActive = useMemo(
-    () =>
-      (activeScan?.servers ?? []).filter(
-        (server) => !installedIds.has(server.id.trim().toLowerCase()),
-      ),
-    [activeScan, installedIds],
+    () => visibleServers.filter((server) => !installedIds.has(server.id.trim().toLowerCase())),
+    [installedIds, visibleServers],
   );
   const selectedInActive = importableInActive.filter((server) =>
     selected.has(externalServerKey(activeTool, server)),
@@ -336,6 +355,16 @@ export function McpImportView(props: {
                   )}
                   {t("mcpHub.importFromFile")}
                 </Button>
+                <label className="relative min-w-44 flex-1 sm:max-w-64">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="search"
+                    value={importQuery}
+                    onChange={(event) => setImportQuery(event.currentTarget.value)}
+                    placeholder={t("mcpHub.importSearchPlaceholder")}
+                    className="h-9 w-full rounded-full border border-border/45 bg-background/70 pl-9 pr-3 text-xs outline-hidden transition-colors placeholder:text-muted-foreground/60 focus:border-border/70 focus:bg-background/90 focus:ring-2 focus:ring-foreground/10"
+                  />
+                </label>
                 <Button
                   variant="outline"
                   size="sm"
@@ -410,9 +439,15 @@ export function McpImportView(props: {
                       {t("mcpHub.importEmpty")}
                     </p>
                   </GlassPanel>
+                ) : visibleServers.length === 0 ? (
+                  <GlassPanel tone="muted">
+                    <p className="py-2 text-center text-xs text-muted-foreground">
+                      {t("mcpHub.importNoMatch")}
+                    </p>
+                  </GlassPanel>
                 ) : (
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    {activeScan.servers.map((server) => {
+                    {visibleServers.map((server) => {
                       const key = externalServerKey(activeScan.tool, server);
                       const alreadyImported = installedIds.has(server.id.trim().toLowerCase());
                       const checked = selected.has(key);
