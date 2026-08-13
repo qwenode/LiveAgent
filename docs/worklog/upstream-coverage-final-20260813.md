@@ -1,7 +1,7 @@
 # Upstream coverage matrix — final audit through `ae919b22`
 
 **Audit date:** August 13, 2026  
-**Local main:** `39479100` (`fix(managed-process): add right-dock mirror self-healing`)  
+**Local main:** `25da5475` (`feat(chat): close runtime snapshot metadata round-trip`)
 **Recorded upstream tip:** `ae919b22468a4a02cf679f23cce73e55e11de4a6`  
 **Requested feda target:** `feda12e5766f230d9cb424bbc2e10b3edc524f3c`
 
@@ -31,6 +31,12 @@
 - GUI TypeScript check passed.
 - Gateway WebUI TypeScript check passed.
 - `git diff --check` passed.
+
+## Chat context/runtime closure (2026-08-13)
+
+- Context metadata production, bridge propagation, Gateway reducer/history/rows consumption, context-ring derivation, and GUI runtime snapshot live/final/recovery round-trips are **ADAPTED** in the current working tree. `runtime_state` remains transport-only and is restored into activity state before row construction; checkpoint rows retain `contextUsageTokens` and take precedence for the Gateway ring after compaction.
+- Gateway `chat.compact` is **ADAPTED** through Web → Go → Rust inbox → GUI controller-backed compaction, with busy rejection, no user-message seed, cancellation, terminal mirror ordering, and focused tests.
+- `2743f3d0` broad shared transcript-body extraction remains **DEFERRED / equivalent local coverage**: `AssistantStatus` is already shared; retry/checkpoint bodies are host-local because GUI virtualization/layout and Gateway full-round rendering differ. Do not wholesale-port `TranscriptList.tsx` or `GatewayTranscript.tsx`.
 
 ## Remaining non-blocking follow-up
 
