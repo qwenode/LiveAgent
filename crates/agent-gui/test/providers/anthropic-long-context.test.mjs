@@ -5,6 +5,7 @@ import { createTsModuleLoader } from "../helpers/load-ts-module.mjs";
 
 const loader = createTsModuleLoader();
 const anthropicModels = loader.loadModule("src/lib/providers/anthropicModels.ts");
+const sharedAnthropicContext = loader.loadModule("@liveagent/ui/lib/models/anthropicContext.ts");
 const longContext = loader.loadModule("src/lib/providers/runtime/anthropicLongContext.ts");
 const payloadPipeline = loader.loadModule("src/lib/providers/runtime/payloadPipeline.ts");
 const modelFactory = loader.loadModule("src/lib/providers/runtime/modelFactory.ts");
@@ -13,6 +14,32 @@ const settings = loader.loadModule("src/lib/settings/index.ts");
 const CONTEXT_1M_BETA = "context-1m-2025-08-07";
 const INTERLEAVED_BETA = "interleaved-thinking-2025-05-14";
 const FINE_GRAINED_BETA = "fine-grained-tool-streaming-2025-05-14";
+
+test("共享 Anthropic 上下文策略与 GUI re-export 保持一致", () => {
+  for (const baseUrl of [
+    undefined,
+    "https://relay.example.com/v1",
+    "https://api.anthropic.com/v1",
+    "https://us-central1-aiplatform.googleapis.com/v1",
+    "https://api.deepseek.com/anthropic",
+  ]) {
+    assert.equal(
+      anthropicModels.shouldSendAnthropicLongContextHeader(baseUrl),
+      sharedAnthropicContext.shouldSendAnthropicLongContextHeader(baseUrl),
+      baseUrl,
+    );
+  }
+
+  for (const modelId of ["claude-sonnet-4-5", "claude-sonnet-4-6", "custom-fable-5-relay"]) {
+    for (const baseUrl of [undefined, "https://relay.example.com/v1", "https://api.anthropic.com/v1"]) {
+      assert.equal(
+        anthropicModels.resolveAnthropicContextWindow(modelId, 200_000, baseUrl),
+        sharedAnthropicContext.resolveAnthropicContextWindow(modelId, 200_000, baseUrl),
+        `${modelId} @ ${baseUrl ?? "<default>"}`,
+      );
+    }
+  }
+});
 
 function makeAnthropicModel(overrides = {}) {
   return {
