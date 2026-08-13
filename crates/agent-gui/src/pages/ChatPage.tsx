@@ -2538,9 +2538,7 @@ export function ChatPage(props: ChatPageProps) {
                   thinkingAlwaysOn={chatRuntimeThinkingAlwaysOn}
                   contextUsageTokensSource={contextUsageTokensSource}
                   contextWindow={currentModelContextWindow}
-                  onManualCompactConfirm={
-                    isAgentDevExecutionMode ? handleManualCompact : undefined
-                  }
+                  onManualCompactConfirm={handleManualCompact}
                   manualCompactBlocked={
                     isSending ||
                     isConversationRunning(currentConversationId) ||

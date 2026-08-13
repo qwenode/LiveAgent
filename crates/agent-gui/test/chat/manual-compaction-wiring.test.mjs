@@ -13,7 +13,7 @@ const composerSource = read("../../../agent-ui/src/pages/chat/ChatComposerBar.ts
 test("desktop manual compaction stays controller-backed and uses the existing stop lifecycle", () => {
   assert.match(chatPageSource, /useManualCompaction\(\{/);
   assert.match(chatPageSource, /setConversationStopHandler,\s*clearConversationStopHandler/);
-  assert.match(chatPageSource, /onManualCompactConfirm=\{/);
+  assert.match(chatPageSource, /onManualCompactConfirm=\{handleManualCompact\}/);
   assert.match(chatPageSource, /manualCompactBlocked=\{/);
   assert.match(chatPageSource, /isConversationRunning\(currentConversationId\)/);
 

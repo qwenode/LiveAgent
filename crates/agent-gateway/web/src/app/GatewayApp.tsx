@@ -19,6 +19,7 @@ import { useConfirmDialog } from "@liveagent/ui/components/ui/confirm-dialog";
 import { ScrollArea } from "@liveagent/ui/components/ui/scroll-area";
 import { LocaleContext, t as translate } from "@liveagent/ui/i18n/index";
 import { normalizeLogicalLineEndings } from "@liveagent/ui/lib/chat/composerText";
+import { deriveGatewayContextUsageTokens } from "@/lib/chat/contextUsage";
 import { openChatFileLink } from "@liveagent/ui/lib/chat/openChatFileLink";
 import { selectLatestTaskProgress } from "@liveagent/ui/lib/chat/taskProgress";
 import {
@@ -4816,6 +4817,10 @@ export default function GatewayApp() {
     return item?.title ?? "";
   }, [selectedHistoryId, sidebarConversationsById]);
   const transcriptRows = displayedTranscript.rows;
+  const gatewayContextUsageTokens = useMemo(
+    () => deriveGatewayContextUsageTokens(transcriptRows),
+    [transcriptRows],
+  );
   const taskProgressSnapshot = useMemo(
     () => selectLatestTaskProgress(transcriptRows),
     [transcriptRows],
@@ -5402,6 +5407,9 @@ export default function GatewayApp() {
                           chatRuntimeControls={chatRuntimeControlsForCurrentProvider}
                           reasoningOptions={chatRuntimeReasoningOptions}
                           thinkingAlwaysOn={chatRuntimeThinkingAlwaysOn}
+                          contextUsageTokens={gatewayContextUsageTokens}
+                          contextWindow={currentModelContextWindow}
+                          manualCompactBlocked={composerCompactionBlocked}
                           gitClient={gitClient}
                           gitWriteEnabled={settings.remote.enableWebGit}
                           gitDisabledMessage={gitDisabledMessage}
