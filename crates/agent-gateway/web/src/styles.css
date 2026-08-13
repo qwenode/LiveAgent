@@ -285,6 +285,16 @@ html[data-liveagent-webui="gateway"] *::-webkit-scrollbar-corner {
   background: transparent;
 }
 
+/* The narrow SFTP two-pane layout relies on a persistent horizontal scrollbar
+   to reveal the clipped second pane. Opt this shared scroll container out of
+   the WebUI-wide thin/color scrollbar policy so the custom WebKit scrollbar
+   remains visible when idle, matching the desktop host. Keep this after the
+   global hover/focus rules above so the auto color wins in those states too. */
+html[data-liveagent-webui="gateway"] .sftp-panes-scroll {
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+
 html[data-liveagent-webui="gateway"] .chat-queue-scroll {
   overscroll-behavior: contain;
   scrollbar-width: none;
