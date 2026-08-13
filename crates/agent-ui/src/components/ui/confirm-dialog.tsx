@@ -145,7 +145,7 @@ function ConfirmDialog(
                   preferCancel
                     ? "text-destructive hover:bg-destructive/10 hover:text-destructive"
                     : ""
-                }`
+                }`}
               >
                 {confirmLabel}
               </Button>
