@@ -20,3 +20,7 @@ The local adaptation preserves the existing GUI runtime/request behavior and Gat
 ## Deferred 2743 areas
 
 `ContextCheckpointCard`, `RetryDetailsBlock`, transient assistant/status abstractions, and broad transcript/settings UI changes remain deferred. Local GUI/Gateway layouts and compaction architecture differ materially from upstream; those changes require a separate compatibility design and must not be folded into this pure-policy adaptation.
+
+## Task 6 re-audit (2026-08-13)
+
+A post-manual-compaction review found no remaining correctness gap that warrants a new 2743 port. `AssistantStatus`, retry-attempt propagation, shared Anthropic policy, context usage, and controller-backed manual compaction are already covered by local equivalents. The remaining duplicated `RetryDetailsBlock` and checkpoint-card implementations are display-only hygiene opportunities; extracting them now would add import churn and host-layout risk without changing behavior. Keep them deferred until a deliberate shared-transcript refactor is scheduled.
